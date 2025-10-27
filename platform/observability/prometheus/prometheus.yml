@@ -1,0 +1,29 @@
+global:
+  scrape_interval: 30s
+
+evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: airflow
+    metrics_path: /admin/metrics
+    params:
+      format: [prometheus]
+    static_configs:
+      - targets:
+          - airflow-webserver:8080
+
+  - job_name: minio
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets:
+          - minio:9000
+
+  - job_name: clickhouse
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - clickhouse:9363
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance

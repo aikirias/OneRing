@@ -1,0 +1,10 @@
+{
+  "name": "Faker Orders to Bronze",
+  "source_definition_id": "5d27bb56-03c8-4290-bbf4-45d4d348d3c0",
+  "destination_definition_id": "424892c4-daac-4491-b35d-c6688ba547ba",
+  "description": "Generates synthetic orders data and stores it in MinIO for Bronze layer demos.",
+  "default_namespace": "orders_demo",
+  "sync_mode": "full_refresh",
+  "destination_sync_mode": "append",
+  "schedule_type": "manual"
+}

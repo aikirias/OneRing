@@ -1,0 +1,5 @@
+order_id,order_date,customer_id,status,sales_total
+1001,2024-01-01,ACME_B2B,shipped,1200.50
+1002,2024-01-02,WAYNE_ENT,rejected,320.00
+1003,2024-01-03,STARK_INDUSTRIES,processing,998.25
+1004,2024-01-04,GLOBEX,delivered,450.75

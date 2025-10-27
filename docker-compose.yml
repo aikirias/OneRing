@@ -1,0 +1,406 @@
+version: "3.9"
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.1-python3.11
+  env_file:
+    - .env
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: ${AIRFLOW_EXECUTOR}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW_LOAD_EXAMPLES}
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: ${TZ}
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+    AIRFLOW__CELERY__FLOWER_URL_PREFIX: /
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__API__AUTH_BACKEND: airflow.api.auth.backend.session
+    AIRFLOW__LOGGING__REMOTE_LOGGING: "False"
+    AIRFLOW__SECRETS__BACKEND: airflow.config.infisical_backend.InfisicalSecretsBackend
+    INFISICAL_SERVER_URL: ${INFISICAL_SERVER_URL}
+    INFISICAL_CLIENT_ID: ${INFISICAL_CLIENT_ID}
+    INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET}
+    INFISICAL_WORKSPACE_ID: ${INFISICAL_WORKSPACE_ID}
+    INFISICAL_ENVIRONMENT: ${INFISICAL_ENVIRONMENT}
+    AIRFLOW_UID: ${AIRFLOW_UID}
+    AIRFLOW_GID: ${AIRFLOW_GID}
+    TZ: ${TZ}
+  volumes:
+    - ./platform/orchestration/airflow/dags:/opt/airflow/dags
+    - ./platform/orchestration/airflow/logs:/opt/airflow/logs
+    - ./platform/orchestration/airflow/plugins:/opt/airflow/plugins
+    - ./platform/orchestration/airflow/config:/opt/airflow/config
+    - ./platform/quality/great_expectations:/opt/great_expectations
+    - ./platform/orchestration/airflow/include:/opt/airflow/include
+  user: "${AIRFLOW_UID}:${AIRFLOW_GID}"
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_started
+    infisical:
+      condition: service_healthy
+
+services:
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command: -c "\
+      mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins && \
+      pip install --no-cache-dir -r /opt/airflow/config/requirements.txt && \
+      airflow db migrate && \
+      airflow users create \
+        --username admin \
+        --firstname Admin \
+        --lastname User \
+        --role Admin \
+        --email admin@example.com \
+        --password admin && \
+      airflow connections check && \
+      airflow db check"
+    profiles:
+      - bootstrap
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    ports:
+      - "8793:8793"
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+
+  airflow-worker:
+    <<: *airflow-common
+    command: celery worker
+    environment:
+      <<: *airflow-common-env
+      AIRFLOW__CELERY__WORKER_CONCURRENCY: 4
+
+  airflow-flower:
+    <<: *airflow-common
+    command: celery flower
+    ports:
+      - "5555:5555"
+
+  postgres:
+    image: postgres:15
+    env_file:
+      - .env
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: ${TZ}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./platform/analytics/postgres/seeds:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    command: redis-server --save 20 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    env_file:
+      - .env
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./platform/analytics/clickhouse/config:/etc/clickhouse-server/config.d
+      - ./platform/analytics/clickhouse/init:/docker-entrypoint-initdb.d
+    ports:
+      - "8123:8123"
+      - "9009:9009"
+      - "9363:9363"
+
+  minio:
+    image: minio/minio:RELEASE.2024-02-17T01-15-10Z
+    env_file:
+      - .env
+    command: server /data --console-address ":${MINIO_CONSOLE_PORT}"
+    ports:
+      - "${MINIO_API_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+
+  minio-client:
+    image: minio/mc:RELEASE.2024-02-23T02-53-19Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      sleep 10 &&
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
+      mc mb -p local/${MINIO_BUCKET_BRONZE} &&
+      mc mb -p local/${MINIO_BUCKET_SILVER} &&
+      mc mb -p local/${MINIO_BUCKET_GOLD}
+    profiles:
+      - bootstrap
+
+  airbyte-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: airbyte
+      POSTGRES_PASSWORD: airbyte
+      POSTGRES_USER: airbyte
+    volumes:
+      - airbyte_db:/var/lib/postgresql/data
+
+  airbyte-temporal:
+    image: temporalio/auto-setup:1.22.3
+    environment:
+      - DB=postgresql
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=airbyte-db
+      - DB_PORT=5432
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development.yaml
+    volumes:
+      - temporal_data:/etc/temporal/config/dynamicconfig
+    depends_on:
+      - airbyte-db
+
+  airbyte-temporal-ui:
+    image: temporalio/web:1.22.0
+    environment:
+      - TEMPORAL_ADDRESS=airbyte-temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:8000
+    depends_on:
+      - airbyte-temporal
+
+  airbyte-server:
+    image: airbyte/server:0.50.47
+    env_file:
+      - .env
+    environment:
+      AIRBYTE_ROLE: server
+    ports:
+      - "8001:8001"
+    volumes:
+      - airbyte_data:/data
+      - airbyte_workspace:/workspace
+    depends_on:
+      - airbyte-db
+      - airbyte-temporal
+
+  airbyte-worker:
+    image: airbyte/worker:0.50.47
+    env_file:
+      - .env
+    depends_on:
+      - airbyte-server
+      - airbyte-temporal
+      - airbyte-db
+    volumes:
+      - airbyte_workspace:/workspace
+      - airbyte_data:/data
+
+  airbyte-webapp:
+    image: airbyte/webapp:0.50.47
+    env_file:
+      - .env
+    ports:
+      - "8000:80"
+    depends_on:
+      - airbyte-server
+
+  openmetadata-postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: openmetadata
+      POSTGRES_USER: ${OPENMETADATA_DB_USER}
+      POSTGRES_PASSWORD: ${OPENMETADATA_DB_PASSWORD}
+    volumes:
+      - openmetadata_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${OPENMETADATA_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  openmetadata-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.4
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+    volumes:
+      - openmetadata_es:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 15
+
+  openmetadata-server:
+    image: openmetadata/server:1.4.1
+    env_file:
+      - .env
+    environment:
+      OPENMETADATA_DB_USER: ${OPENMETADATA_DB_USER}
+      OPENMETADATA_DB_PASSWORD: ${OPENMETADATA_DB_PASSWORD}
+      OPENMETADATA_POSTGRES_HOST: openmetadata-postgres
+      OPENMETADATA_POSTGRES_PORT: 5432
+      OPENMETADATA_CLUSTER_NAME: "local"
+      OPENMETADATA_ELASTICSEARCH_HOST: openmetadata-elasticsearch
+      OPENMETADATA_ELASTICSEARCH_PORT: 9200
+      SERVER_PORT: ${OPENMETADATA_SERVER_PORT}
+    ports:
+      - "${OPENMETADATA_SERVER_PORT}:8585"
+      - "${OPENMETADATA_API_PORT}:8586"
+    volumes:
+      - ./platform/catalog/openmetadata/config:/openmetadata/config
+      - ./platform/catalog/openmetadata/ingestion:/openmetadata/ingestion
+    depends_on:
+      openmetadata-postgres:
+        condition: service_healthy
+      openmetadata-elasticsearch:
+        condition: service_healthy
+
+  openmetadata-ingestion:
+    image: openmetadata/ingestion:1.4.1
+    env_file:
+      - .env
+    volumes:
+      - ./platform/catalog/openmetadata/ingestion:/openmetadata/ingestion
+    depends_on:
+      - openmetadata-server
+
+  liquibase:
+    image: liquibase/liquibase:4.25
+    entrypoint: ["/bin/sh", "-c"]
+    working_dir: /liquibase
+    command: "tail -f /dev/null"
+    volumes:
+      - ./platform/versioning/liquibase:/liquibase
+      - ./platform/analytics/postgres/seeds:/seeds
+    env_file:
+      - .env
+    profiles:
+      - tools
+
+  infisical-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: infisical
+      POSTGRES_USER: infisical
+      POSTGRES_PASSWORD: infisical
+    volumes:
+      - infisical_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infisical"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  infisical-redis:
+    image: redis:7
+    command: redis-server --save 20 1 --loglevel warning
+    volumes:
+      - infisical_redis:/data
+
+  infisical:
+    image: infisical/platform:latest
+    environment:
+      NODE_ENV: development
+      ENCRYPTION_KEY: "this_should_be_32_char_minimum"
+      DATABASE_URL: postgresql://infisical:infisical@infisical-db:5432/infisical
+      REDIS_URL: redis://infisical-redis:6379
+      PORT: 8080
+    ports:
+      - "8082:8080"
+    depends_on:
+      infisical-db:
+        condition: service_healthy
+      infisical-redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:10.3.3
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_INSTALL_PLUGINS: grafana-clock-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./platform/observability/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./platform/observability/grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  prometheus:
+    image: prom/prometheus:v2.49.0
+    volumes:
+      - ./platform/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+networks:
+  default:
+    name: ${PROJECT_NETWORK}
+
+volumes:
+  postgres_data:
+  redis_data:
+  clickhouse_data:
+  minio_data:
+  airbyte_db:
+  airbyte_workspace:
+  airbyte_data:
+  temporal_data:
+  openmetadata_db:
+  openmetadata_es:
+  grafana_data:
+  infisical_pg:
+  infisical_redis:

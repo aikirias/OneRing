@@ -1,0 +1,43 @@
+{
+  "id": null,
+  "title": "Data Platform Overview",
+  "timezone": "",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Airflow DAG Runs",
+      "targets": [
+        {
+          "expr": "sum(increase(airflow_dag_run_duration_sum[5m]))"
+        }
+      ],
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "type": "stat",
+      "title": "MinIO Requests",
+      "targets": [
+        {
+          "expr": "sum(rate(minio_s3_requests_total[5m]))"
+        }
+      ],
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "ClickHouse Inserts",
+      "targets": [
+        {
+          "expr": "sum(rate(ClickHouseAsyncInsert[5m]))"
+        }
+      ],
+      "gridPos": {"x": 0, "y": 8, "w": 24, "h": 8}
+    }
+  ],
+  "templating": {
+    "list": []
+  }
+}

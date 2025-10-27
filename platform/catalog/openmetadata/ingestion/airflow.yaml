@@ -1,0 +1,19 @@
+source:
+  type: airflow
+  serviceName: airflow_local
+  serviceConnection:
+    config:
+      type: Airflow
+      hostPort: http://airflow-webserver:8080
+      username: admin
+      password: "{{ env_var_value('AIRFLOW_ADMIN_PASSWORD', 'admin') }}"
+      connection:
+        conn_type: http
+sink:
+  type: metadata-rest
+  config:
+    apiEndpoint: http://openmetadata-server:8585/api
+workflowConfig:
+  openMetadataServerConfig:
+    hostPort: http://openmetadata-server:8585/api
+    authProvider: no-auth

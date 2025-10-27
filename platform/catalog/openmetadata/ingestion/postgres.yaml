@@ -1,0 +1,18 @@
+source:
+  type: postgres
+  serviceName: postgres_gold
+  serviceConnection:
+    config:
+      type: Postgres
+      username: "{{ env_var_value('CURATED_PG_USER', 'curated_user') }}"
+      password: "{{ env_var_value('CURATED_PG_PASSWORD', 'curatedpass') }}"
+      hostPort: postgres:5432
+      database: curated
+sink:
+  type: metadata-rest
+  config:
+    apiEndpoint: http://openmetadata-server:8585/api
+workflowConfig:
+  openMetadataServerConfig:
+    hostPort: http://openmetadata-server:8585/api
+    authProvider: no-auth

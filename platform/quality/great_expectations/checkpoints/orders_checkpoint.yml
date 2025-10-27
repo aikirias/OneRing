@@ -1,0 +1,15 @@
+name: orders_checkpoint
+config_version: 1.0
+class_name: Checkpoint
+run_name_template: "%Y%m%d_%H%M%S_orders"
+batch_request:
+  datasource_name: runtime_pandas
+  data_connector_name: runtime_data_connector
+  data_asset_name: orders
+  runtime_parameters:
+    batch_data: null
+  batch_identifiers:
+    batch_id: runtime_batch
+validations:
+  - expectation_suite_name: orders_bronze
+  - expectation_suite_name: orders_silver

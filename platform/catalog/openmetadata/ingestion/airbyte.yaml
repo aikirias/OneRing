@@ -1,0 +1,15 @@
+source:
+  type: airbyte
+  serviceName: airbyte_local
+  serviceConnection:
+    config:
+      type: Airbyte
+      hostPort: http://airbyte-server:8001
+sink:
+  type: metadata-rest
+  config:
+    apiEndpoint: http://openmetadata-server:8585/api
+workflowConfig:
+  openMetadataServerConfig:
+    hostPort: http://openmetadata-server:8585/api
+    authProvider: no-auth
