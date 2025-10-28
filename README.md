@@ -13,7 +13,7 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
 | Data Quality | Great Expectations |
 | Metadata & Lineage | OpenMetadata (server + ingestion) |
 | Schema Versioning | Liquibase (Postgres + ClickHouse changelogs) |
-| Secrets Vault | Infisical (server, Postgres, Redis) |
+| Secrets Handling | Environment variables (`.env`, Docker secrets) |
 | Observability | Prometheus + Grafana |
 
 ## Prerequisites
@@ -27,7 +27,7 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
 1. Copy the environment template and customize secrets as needed:
    ```bash
    cp .env.example .env
-   # edit .env with unique passwords and Infisical credentials
+   # edit .env with unique passwords
    ```
 2. Install host Python dependencies for helper scripts:
    ```bash
@@ -37,7 +37,7 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
    ```bash
    make bootstrap
    ```
-   > `bootstrap` orchestrates Infisical seeding, Liquibase migrations, MinIO bucket creation, Airbyte/OpenMetadata registration, and Airflow connection setup.
+   > `bootstrap` orchestrates database/bootstrap migrations, MinIO bucket creation, Airbyte/OpenMetadata registration, and Airflow connection setup. Airbyte can take a couple of minutes to expose its API during the first run.
 4. Bring everything online:
    ```bash
    docker compose up -d
@@ -75,9 +75,7 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
 
 ## Secrets & Config Management
 
-- Infisical: `http://localhost:8082` (configure workspace + machine identity, update `.env`).
-- `ops/scripts/infisical_seed.sh` publishes Airflow connection URIs (`AIRFLOW_CONN_*`) and variables (`AIRFLOW_VAR_*`).
-- Airflow uses `platform/orchestration/airflow/config/infisical_backend.py` to source all secrets dynamically from Infisical—metadata DB only stores placeholders.
+- Secrets are sourced from `.env` by default; the stack also includes Infisical (`http://localhost:8082`) so you can wire in a vault if desired. Populate `INFISICAL_*` variables (use base64-encoded 32-byte values for `INFISICAL_ENCRYPTION_KEY` and `INFISICAL_AUTH_SECRET`) and rerun `make bootstrap` to seed secrets automatically via `ops/scripts/infisical_seed.sh`.
 
 ## Schema Versioning
 
@@ -92,7 +90,7 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
 ## Extending the Platform
 
 1. **Add new Airbyte connectors**: update `ops/scripts/bootstrap_airbyte.py` or use the Airbyte UI; then rerun the script to register additional connections.
-2. **New Airflow DAGs**: drop DAG files into `platform/orchestration/airflow/dags/`; leverage secrets via Infisical and add GE suites under `platform/quality/great_expectations/expectations`.
+2. **New Airflow DAGs**: drop DAG files into `platform/orchestration/airflow/dags/`; add GE suites under `platform/quality/great_expectations/expectations`.
 3. **Additional Great Expectations suites**: create expectation JSON files and reference them via checkpoints or DAG tasks inside `platform/quality/great_expectations`.
 4. **Database schema changes**: author new Liquibase changelog files (incremental IDs) under `platform/versioning/liquibase` and rerun updates.
 5. **Metadata ingestion**: add YAML configs in `platform/catalog/openmetadata/ingestion/` and append them to `ops/scripts/openmetadata_seed.py`.
@@ -146,7 +144,7 @@ flowchart LR
 ## Troubleshooting
 
 - `docker compose logs <service>` for detailed service logs.
-- Ensure Infisical workspace credentials are correct before running bootstrap.
+- Ensure Airbyte containers are healthy (`docker compose ps`) if bootstrap waits on the API.
 - If Liquibase ClickHouse update fails, download the ClickHouse Liquibase extension jar and mount it under `liquibase/drivers/`.
 - Re-run `ops/scripts/seed_minio.py` to refresh Bronze sample data.
 

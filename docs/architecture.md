@@ -11,8 +11,7 @@
 4. **Great Expectations** validates data quality during DAG execution.
 5. **Liquibase** versions schemas for Postgres and ClickHouse targets.
 6. **OpenMetadata** centralizes catalog, lineage, and quality signals.
-7. **Infisical** manages secrets consumed by services (Airflow, Airbyte, etc.).
-8. **Grafana** visualizes operational metrics and validation outcomes.
+7. **Grafana** visualizes operational metrics and validation outcomes.
 
 ## High-Level Flow
 ```mermaid
@@ -44,7 +43,7 @@ flowchart LR
 
 ## Networking & Security
 - Single Docker network `${PROJECT_NETWORK}` with service-specific subnets (defined in compose).
-- Secrets fetched dynamically from Infisical via Airflow secret backend and bootstrap scripts.
+- Secrets managed locally via environment variables (`.env`); plug in your preferred vault if needed.
 
 ## Storage & Volumes
 - Persistent named volumes for databases and message brokers.
@@ -57,6 +56,6 @@ flowchart LR
   - `platform/analytics/{clickhouse,postgres}` – DDL, init SQL, curated seeds.
   - `platform/storage/medallion` – local Bronze/Silver/Gold samples.
   - `platform/versioning/liquibase` – changelogs and property files.
-  - `platform/security/infisical` – vault configuration.
+  - `platform/security/infisical` – vault configuration & onboarding scripts (`INFISICAL_*` settings).
   - `platform/observability/{grafana,prometheus}` – dashboards, scrape configs.
   - `ops/scripts` – bootstrap and operational automation.

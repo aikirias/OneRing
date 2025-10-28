@@ -7,7 +7,7 @@
 
 ## Phase 2 – Infrastructure Configuration
 - [x] Write `docker-compose.yml` with networks, volumes, dependencies.
-- [x] Provide config templates for Airflow, Airbyte, MinIO, OpenMetadata, Great Expectations, Grafana, Infisical, Liquibase.
+- [x] Provide config templates for Airflow, Airbyte, MinIO, OpenMetadata, Great Expectations, Grafana, Liquibase.
 - [x] Add bootstrap scripts to automate setup tasks.
 
 ## Phase 3 – Data Pipelines & Quality

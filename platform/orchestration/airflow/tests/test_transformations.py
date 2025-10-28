@@ -4,9 +4,9 @@ from pathlib import Path
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(PROJECT_ROOT / "platform" / "orchestration"))
+sys.path.insert(0, str(PROJECT_ROOT / "platform" / "orchestration" / "airflow"))
 
-from airflow.include.transformations import bronze_frame_from_records, silver_frame
+from include.transformations import bronze_frame_from_records, silver_frame
 
 
 def test_bronze_frame_normalizes_types():

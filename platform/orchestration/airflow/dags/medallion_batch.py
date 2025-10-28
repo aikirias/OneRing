@@ -13,11 +13,11 @@ import boto3
 import pandas as pd
 import psycopg2
 import requests
-from airflow.include.transformations import bronze_frame_from_records, silver_frame
+from include.transformations import bronze_frame_from_records, silver_frame
 from airflow.decorators import dag, task
 from airflow.hooks.base import BaseHook
 from great_expectations.core.batch import RuntimeBatchRequest
-from great_expectations.data_context.data_context import BaseDataContext
+from great_expectations.data_context import get_context
 from clickhouse_driver import Client as ClickHouseClient
 
 
@@ -89,8 +89,8 @@ def _postgres_conn_info() -> Dict[str, Any]:
     }
 
 
-def _ge_context() -> BaseDataContext:
-    return BaseDataContext(context_root_dir="/opt/great_expectations")
+def _ge_context():
+    return get_context(context_root_dir="/opt/great_expectations")
 
 
 def _run_checkpoint(suite_name: str, dataframe: pd.DataFrame, batch_id: str) -> None:
@@ -117,7 +117,7 @@ def _run_checkpoint(suite_name: str, dataframe: pd.DataFrame, batch_id: str) -> 
 
 @dag(
     dag_id="medallion_batch_demo",
-    schedule_interval=None,
+    schedule=None,
     catchup=False,
     start_date=datetime(2024, 1, 1),
     default_args={"owner": "data-platform", "retries": 1, "retry_delay": timedelta(minutes=5)},

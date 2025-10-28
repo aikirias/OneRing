@@ -5,10 +5,12 @@ source:
     config:
       type: Airbyte
       hostPort: http://airbyte-server:8001
+  sourceConfig:
+    config:
+      type: PipelineMetadata
 sink:
   type: metadata-rest
-  config:
-    apiEndpoint: http://openmetadata-server:8585/api
+  config: {}
 workflowConfig:
   openMetadataServerConfig:
     hostPort: http://openmetadata-server:8585/api

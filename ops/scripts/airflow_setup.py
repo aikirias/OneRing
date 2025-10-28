@@ -79,7 +79,8 @@ try:
         if existing:
             session.delete(existing)
             session.commit()
-        new_conn = Connection(**{k: v for k, v in conn.items() if v is not None})
+        filtered_conn = dict((key, value) for key, value in conn.items() if value is not None)
+        new_conn = Connection(**filtered_conn)
         session.add(new_conn)
         session.commit()
     for key, value in {json.dumps(VARIABLES)}.items():

@@ -2,13 +2,17 @@
 """Register demo Airbyte source, destination, and connection for Bronze ingestion."""
 import os
 import sys
+import time
 from typing import Any, Dict
 
 import requests
+from requests import exceptions
 
 API_URL = os.getenv("AIRBYTE_API_URL", "http://localhost:8001/api").rstrip("/")
 SOURCE_NAME = os.getenv("AIRBYTE_DEMO_SOURCE", "Demo Faker Orders")
+SOURCE_DEFINITION_NAME = os.getenv("AIRBYTE_DEMO_SOURCE_DEFINITION", "Sample Data (Faker)")
 DESTINATION_NAME = os.getenv("AIRBYTE_DEMO_DESTINATION", "Demo MinIO Bronze")
+DESTINATION_DEFINITION_NAME = os.getenv("AIRBYTE_DEMO_DESTINATION_DEFINITION", "S3")
 CONNECTION_NAME = os.getenv("AIRBYTE_DEMO_CONNECTION", "Faker Orders to Bronze")
 BRONZE_BUCKET = os.getenv("MINIO_BUCKET_BRONZE", "bronze")
 ACCESS_KEY = os.getenv("MINIO_ROOT_USER")
@@ -18,11 +22,19 @@ MINIO_ENDPOINT = os.getenv("AIRBYTE_MINIO_ENDPOINT", "http://minio:9000")
 session = requests.Session()
 
 
-def _post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    resp = session.post(f"{API_URL}{path}", json=payload, timeout=30)
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Airbyte API call {path} failed: {resp.status_code} {resp.text}")
-    return resp.json()
+def _post(path: str, payload: Dict[str, Any], *, timeout: int = 60, retries: int = 3) -> Dict[str, Any]:
+    url = f"{API_URL}{path}"
+    for attempt in range(1, retries + 1):
+        try:
+            resp = session.post(url, json=payload, timeout=timeout)
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Airbyte API call {path} failed: {resp.status_code} {resp.text}")
+            return resp.json()
+        except (exceptions.Timeout, exceptions.ConnectionError) as exc:
+            if attempt == retries:
+                raise RuntimeError(f"Airbyte API call {path} failed after {retries} attempts: {exc}") from exc
+            time.sleep(5)
+    raise RuntimeError(f"Airbyte API call {path} exhausted retries")
 
 
 def _get_workspace_id() -> str:
@@ -41,14 +53,32 @@ def _find_existing(path: str, payload: Dict[str, Any], name_key: str, target_nam
     return None
 
 
+def _lookup_source_definition_id(name: str) -> str:
+    resp = _post("/v1/source_definitions/list", {})
+    for definition in resp.get("sourceDefinitions", []):
+        if definition.get("name", "").lower() == name.lower():
+            return definition["sourceDefinitionId"]
+    raise RuntimeError(f"Source definition '{name}' not found in Airbyte registry.")
+
+
+def _lookup_destination_definition_id(name: str) -> str:
+    resp = _post("/v1/destination_definitions/list", {})
+    for definition in resp.get("destinationDefinitions", []):
+        if definition.get("name", "").lower() == name.lower():
+            return definition["destinationDefinitionId"]
+    raise RuntimeError(f"Destination definition '{name}' not found in Airbyte registry.")
+
+
 def ensure_source(workspace_id: str) -> str:
     existing = _find_existing("/v1/sources/list", {"workspaceId": workspace_id}, "name", SOURCE_NAME)
     if existing:
         return existing["sourceId"]
 
+    source_definition_id = _lookup_source_definition_id(SOURCE_DEFINITION_NAME)
+
     payload = {
         "name": SOURCE_NAME,
-        "sourceDefinitionId": "5d27bb56-03c8-4290-bbf4-45d4d348d3c0",  # source-faker
+        "sourceDefinitionId": source_definition_id,
         "workspaceId": workspace_id,
         "connectionConfiguration": {
             "count": 100,
@@ -70,21 +100,25 @@ def ensure_destination(workspace_id: str) -> str:
     if existing:
         return existing["destinationId"]
 
+    destination_definition_id = _lookup_destination_definition_id(DESTINATION_DEFINITION_NAME)
+
     payload = {
         "name": DESTINATION_NAME,
-        "destinationDefinitionId": "424892c4-daac-4491-b35d-c6688ba547ba",  # destination-s3
+        "destinationDefinitionId": destination_definition_id,
         "workspaceId": workspace_id,
         "connectionConfiguration": {
             "s3_bucket_name": BRONZE_BUCKET,
-            "s3_path_format": "{namespace}/{stream}/{year}-{month}-{day}",
             "s3_bucket_region": "us-east-1",
+            "s3_bucket_path": "raw/orders",
+            "s3_path_format": "{namespace}/{stream}/{year}-{month}-{day}",
             "s3_endpoint": MINIO_ENDPOINT,
-            "s3_path_prefix": "airbyte",
             "access_key_id": ACCESS_KEY,
             "secret_access_key": SECRET_KEY,
-            "s3_output_format": {
+            "file_name_pattern": "{timestamp}",
+            "format": {
                 "format_type": "JSONL",
-                "compression_type": "No Compression"
+                "compression": {"compression_type": "No Compression"},
+                "flattening": "No flattening"
             }
         }
     }
@@ -115,7 +149,8 @@ def ensure_connection(source_id: str, destination_id: str, workspace_id: str) ->
                     },
                     "config": {
                         "syncMode": "full_refresh",
-                        "destinationSyncMode": "append"
+                        "destinationSyncMode": "append",
+                        "selected": True
                     }
                 }
             ]

@@ -18,21 +18,26 @@ def run_ingestion(config: Path) -> None:
     if not config.exists():
         raise FileNotFoundError(f"Missing ingestion config: {config}")
     print(f"Running OpenMetadata ingestion for {config}...")
-    subprocess.run(
-        [
-            "docker",
-            "compose",
-            "run",
-            "--rm",
-            "openmetadata-ingestion",
-            "openmetadata-ingestion",
-            "ingest",
-            "-c",
-            str(config),
-        ],
-        check=True,
-        cwd=ROOT,
-    )
+    container_config = Path("/openmetadata/ingestion") / config.relative_to(CONFIG_BASE)
+    try:
+        subprocess.run(
+            [
+                "docker",
+                "compose",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "metadata",
+                "openmetadata-ingestion",
+                "ingest",
+                "-c",
+                str(container_config),
+            ],
+            check=True,
+            cwd=ROOT,
+        )
+    except subprocess.CalledProcessError as exc:
+        print(f"Warning: OpenMetadata ingestion failed for {config.name}: {exc}", file=sys.stderr)
 
 
 def main() -> None:
@@ -43,9 +48,6 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except subprocess.CalledProcessError as exc:
-        print(f"OpenMetadata ingestion failed: {exc}", file=sys.stderr)
-        sys.exit(exc.returncode)
     except Exception as exc:  # pylint: disable=broad-except
         print(f"Error during OpenMetadata seed: {exc}", file=sys.stderr)
         sys.exit(1)

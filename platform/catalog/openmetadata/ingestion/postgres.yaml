@@ -5,13 +5,16 @@ source:
     config:
       type: Postgres
       username: "{{ env_var_value('CURATED_PG_USER', 'curated_user') }}"
-      password: "{{ env_var_value('CURATED_PG_PASSWORD', 'curatedpass') }}"
+      authType:
+        password: "{{ env_var_value('CURATED_PG_PASSWORD', 'curatedpass') }}"
       hostPort: postgres:5432
       database: curated
+  sourceConfig:
+    config:
+      type: DatabaseMetadata
 sink:
   type: metadata-rest
-  config:
-    apiEndpoint: http://openmetadata-server:8585/api
+  config: {}
 workflowConfig:
   openMetadataServerConfig:
     hostPort: http://openmetadata-server:8585/api

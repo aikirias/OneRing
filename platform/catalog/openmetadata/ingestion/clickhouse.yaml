@@ -6,12 +6,15 @@ source:
       type: Clickhouse
       hostPort: http://clickhouse:8123
       username: "{{ env_var_value('CLICKHOUSE_USER', 'default') }}"
-      password: "{{ env_var_value('CLICKHOUSE_PASSWORD', 'clickpass') }}"
+      authType:
+        password: "{{ env_var_value('CLICKHOUSE_PASSWORD', 'clickpass') }}"
       database: analytics
+  sourceConfig:
+    config:
+      type: DatabaseMetadata
 sink:
   type: metadata-rest
-  config:
-    apiEndpoint: http://openmetadata-server:8585/api
+  config: {}
 workflowConfig:
   openMetadataServerConfig:
     hostPort: http://openmetadata-server:8585/api

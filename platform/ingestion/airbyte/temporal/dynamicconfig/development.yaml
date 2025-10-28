@@ -1,0 +1,3 @@
+# Minimal Temporal dynamic configuration for local development
+# Leaving empty map ensures the auto-setup container starts without errors.
+{}

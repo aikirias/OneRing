@@ -5,14 +5,20 @@ source:
     config:
       type: Airflow
       hostPort: http://airflow-webserver:8080
-      username: admin
-      password: "{{ env_var_value('AIRFLOW_ADMIN_PASSWORD', 'admin') }}"
+      numberOfStatus: 10
       connection:
-        conn_type: http
+        type: Postgres
+        hostPort: postgres:5432
+        username: "{{ env_var_value('POSTGRES_USER', 'airflow') }}"
+        authType:
+          password: "{{ env_var_value('POSTGRES_PASSWORD', 'airflowpass') }}"
+        database: "{{ env_var_value('POSTGRES_DB', 'airflow') }}"
+  sourceConfig:
+    config:
+      type: PipelineMetadata
 sink:
   type: metadata-rest
-  config:
-    apiEndpoint: http://openmetadata-server:8585/api
+  config: {}
 workflowConfig:
   openMetadataServerConfig:
     hostPort: http://openmetadata-server:8585/api
