@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import subprocess
 from datetime import datetime, timedelta
 
@@ -10,7 +11,8 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from feast import FeatureStore
 
-from platform.ml.training.train_pipeline import run_hyperopt_training
+sys.path.append("/opt/airflow/platform")
+from ml.training.train_pipeline import run_hyperopt_training
 
 FEAST_FEATURES = [
     "customer_features:total_transactions",

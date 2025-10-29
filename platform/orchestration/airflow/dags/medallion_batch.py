@@ -13,12 +13,15 @@ import boto3
 import pandas as pd
 import psycopg2
 import requests
+from requests import exceptions as requests_exceptions
 from include.transformations import bronze_frame_from_records, silver_frame
 from airflow.decorators import dag, task
 from airflow.hooks.base import BaseHook
 from great_expectations.core.batch import RuntimeBatchRequest
 from great_expectations.data_context import get_context
 from clickhouse_driver import Client as ClickHouseClient
+
+AIRBYTE_TIMEOUT = int(os.getenv("AIRBYTE_API_TIMEOUT", "600"))
 
 
 def _airbyte_api_base() -> str:
@@ -32,7 +35,7 @@ def _airbyte_api_base() -> str:
 
 def _airbyte_workspace_id() -> str:
     base = _airbyte_api_base()
-    response = requests.post(f"{base}/v1/workspaces/list", json={}, timeout=30)
+    response = requests.post(f"{base}/v1/workspaces/list", json={}, timeout=AIRBYTE_TIMEOUT)
     response.raise_for_status()
     workspaces = response.json().get("workspaces", [])
     if not workspaces:
@@ -44,7 +47,7 @@ def _airbyte_connection_id() -> str:
     base = _airbyte_api_base()
     workspace_id = _airbyte_workspace_id()
     payload = {"workspaceId": workspace_id}
-    response = requests.post(f"{base}/v1/connections/list", json=payload, timeout=30)
+    response = requests.post(f"{base}/v1/connections/list", json=payload, timeout=AIRBYTE_TIMEOUT)
     response.raise_for_status()
     name = os.getenv("AIRBYTE_DEMO_CONNECTION", "Faker Orders to Bronze")
     for connection in response.json().get("connections", []):
@@ -129,9 +132,30 @@ def medallion_batch_demo() -> None:
         base = _airbyte_api_base()
         logging.info("Triggering Airbyte sync via %s", base)
         connection_id = _airbyte_connection_id()
-        response = requests.post(f"{base}/v1/connections/sync", json={"connectionId": connection_id}, timeout=30)
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            response = requests.post(
+                f"{base}/v1/connections/sync", json={"connectionId": connection_id}, timeout=AIRBYTE_TIMEOUT
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except requests_exceptions.ReadTimeout:
+            logging.warning(
+                "Airbyte sync trigger timed out after %ss; attempting to fetch latest job id", AIRBYTE_TIMEOUT
+            )
+            response = requests.post(
+                f"{base}/v1/jobs/list",
+                json={
+                    "configId": connection_id,
+                    "configTypes": ["sync"],
+                    "pagination": {"pageSize": 1},
+                },
+                timeout=AIRBYTE_TIMEOUT,
+            )
+            response.raise_for_status()
+            jobs = response.json().get("jobs", [])
+            if not jobs:
+                raise RuntimeError("Airbyte sync request timed out and no jobs were returned")
+            payload = {"job": jobs[0]}
         job = payload.get("job") or {}
         job_id = job.get("id")
         if not job_id:
@@ -144,7 +168,7 @@ def medallion_batch_demo() -> None:
         job_id = job["job_id"]
         status = ""
         while status not in {"succeeded", "failed", "cancelled"}:
-            response = requests.post(f"{base}/v1/jobs/get", json={"id": job_id}, timeout=30)
+            response = requests.post(f"{base}/v1/jobs/get", json={"id": job_id}, timeout=AIRBYTE_TIMEOUT)
             response.raise_for_status()
             body = response.json()
             status = body.get("job", {}).get("status", "unknown")

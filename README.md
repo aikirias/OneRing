@@ -127,22 +127,27 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 - Submit ad-hoc Spark jobs: `docker compose exec spark-master spark-submit --master spark://spark-master:7077 <job.py>`.
 - Deploy Flink jobs: `docker compose exec flink-jobmanager flink run --detached /path/to/job.jar` (mount jars or bind volumes as needed).
 
-## Pulsar Messaging
+## Streaming (Pulsar & Flink)
 
-> Profile to run: `streaming`.
+> Profiles to run: `streaming` (Pulsar) + `ingestion` (Flink cluster).
 
-- Start Pulsar standalone:
+- Launch Pulsar and the Flink JobManager/TaskManager together:
   ```bash
-  make up PROFILES="streaming"
+  make up PROFILES="streaming ingestion"
   ```
-- Broker binary protocol: `pulsar://localhost:${PULSAR_BINARY_PORT}` (default `6650`).
-- Admin/HTTP API and dashboard proxy: `http://localhost:${PULSAR_HTTP_PORT}` (default `8087`).
-- Example topic creation:
+- Broker binary protocol: `pulsar://localhost:${PULSAR_BINARY_PORT}` (default `6650`); REST/admin UI: `http://localhost:${PULSAR_HTTP_PORT}` (default `8087`). Flink REST dashboard: `http://localhost:${FLINK_REST_PORT}` (default `8090`).
+- Register topics and verify Pulsar connectivity:
   ```bash
   docker compose exec pulsar bin/pulsar-admin topics create persistent://public/default/demo-topic
   docker compose exec pulsar bin/pulsar-client produce persistent://public/default/demo-topic -m "hello from oner"
   ```
-- Integrate with Flink/Spark by pointing their connectors at the broker URL above.
+- Deploy a streaming job to Flink once the cluster is up:
+  ```bash
+  docker compose exec flink-jobmanager flink run --detached /jobs/example-job.jar
+  docker compose exec flink-jobmanager flink list
+  ```
+  Mount your compiled jars under `platform/streaming/flink/jobs/` (bind in `docker-compose.yml`) or use a volume override when launching Compose.
+- Integrate Flink or Spark connectors by targeting the Pulsar broker URL above; use the REST dashboard to monitor job status and metrics.
 
 ## Analytics Exploration (Metabase)
 

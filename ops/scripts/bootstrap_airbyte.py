@@ -9,6 +9,7 @@ import requests
 from requests import exceptions
 
 API_URL = os.getenv("AIRBYTE_API_URL", "http://localhost:8001/api").rstrip("/")
+REQUEST_TIMEOUT = int(os.getenv("AIRBYTE_API_TIMEOUT", "180"))
 SOURCE_NAME = os.getenv("AIRBYTE_DEMO_SOURCE", "Demo Faker Orders")
 SOURCE_DEFINITION_NAME = os.getenv("AIRBYTE_DEMO_SOURCE_DEFINITION", "Sample Data (Faker)")
 DESTINATION_NAME = os.getenv("AIRBYTE_DEMO_DESTINATION", "Demo MinIO Bronze")
@@ -22,7 +23,7 @@ MINIO_ENDPOINT = os.getenv("AIRBYTE_MINIO_ENDPOINT", "http://minio:9000")
 session = requests.Session()
 
 
-def _post(path: str, payload: Dict[str, Any], *, timeout: int = 60, retries: int = 3) -> Dict[str, Any]:
+def _post(path: str, payload: Dict[str, Any], *, timeout: int = REQUEST_TIMEOUT, retries: int = 3) -> Dict[str, Any]:
     url = f"{API_URL}{path}"
     for attempt in range(1, retries + 1):
         try:
