@@ -9,17 +9,67 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
 SKIP_PULL=false
+PROFILES_INPUT="core"
+
 while (($#)); do
   case "$1" in
     --skip-pull)
       SKIP_PULL=true
+      shift
+      ;;
+    --profiles)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "--profiles requires a comma-separated list (e.g. core,ingestion)" >&2
+        exit 1
+      fi
+      PROFILES_INPUT="$1"
+      shift
       ;;
     *)
       echo "Unknown option: $1" >&2
+      exit 1
       ;;
   esac
-  shift
 done
+
+IFS=',' read -ra RAW_PROFILES <<< "$PROFILES_INPUT"
+PROFILE_LIST=()
+for raw in "${RAW_PROFILES[@]}"; do
+  trimmed="${raw//[[:space:]]/}"
+  if [ -n "$trimmed" ]; then
+    PROFILE_LIST+=("$trimmed")
+  fi
+done
+
+if [ ${#PROFILE_LIST[@]} -eq 0 ]; then
+  PROFILE_LIST=("core")
+fi
+
+declare -A PROFILE_SEEN=()
+DEDUPED_PROFILES=()
+for profile in "${PROFILE_LIST[@]}"; do
+  if [[ -z "${PROFILE_SEEN[$profile]:-}" ]]; then
+    PROFILE_SEEN[$profile]=1
+    DEDUPED_PROFILES+=("$profile")
+  fi
+done
+PROFILE_LIST=("${DEDUPED_PROFILES[@]}")
+
+COMPOSE_PROFILE_FLAGS=()
+for profile in "${PROFILE_LIST[@]}"; do
+  COMPOSE_PROFILE_FLAGS+=(--profile "$profile")
+done
+
+profile_selected() {
+  local needle="$1"
+  for profile in "${PROFILE_LIST[@]}"; do
+    if [[ "$profile" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 if [ -f .env ]; then
   echo "Loading environment variables from .env"
@@ -40,7 +90,7 @@ wait_for_service_health() {
 
   start=$(date +%s)
   while true; do
-    container=$(docker compose ps -q "$service")
+    container=$(docker compose "${COMPOSE_PROFILE_FLAGS[@]}" ps -q "$service")
     if [[ -z "$container" ]]; then
       echo "Waiting for container id for service '$service'..."
       sleep "$interval"
@@ -54,7 +104,7 @@ wait_for_service_health() {
         ;;
       unhealthy|exited)
         echo "Service '$service' reported status '$status'."
-        docker compose logs "$service"
+        docker compose "${COMPOSE_PROFILE_FLAGS[@]}" logs "$service"
         return 1
         ;;
       starting|restarting)
@@ -67,7 +117,7 @@ wait_for_service_health() {
     elapsed=$((time_now - start))
     if (( elapsed >= timeout )); then
       echo "Timed out after ${elapsed}s waiting for '$service' to become healthy." >&2
-      docker compose logs "$service"
+      docker compose "${COMPOSE_PROFILE_FLAGS[@]}" logs "$service"
       return 1
     fi
     sleep "$interval"
@@ -75,69 +125,118 @@ wait_for_service_health() {
 }
 
 if [ "$SKIP_PULL" = false ]; then
-  echo "Pulling container images..."
-  docker compose pull
+  echo "Pulling container images for profiles: ${PROFILE_LIST[*]}..."
+  docker compose "${COMPOSE_PROFILE_FLAGS[@]}" pull
 fi
 
-echo "Starting core infrastructure (databases, secrets, storage)..."
-docker compose up -d infisical-db infisical-redis infisical postgres redis minio clickhouse airbyte-db openmetadata-postgres openmetadata-elasticsearch prometheus
+declare -A PROFILE_BASE_SERVICES=(
+  [core]="postgres redis clickhouse minio infisical-db infisical-redis infisical"
+  [ingestion]="minio airbyte-db"
+  [catalog]="openmetadata-postgres openmetadata-elasticsearch"
+  [ml]="minio mlflow-db"
+  [observability]="prometheus"
+)
 
-echo "Waiting for Infisical to become healthy..."
-if wait_for_service_health infisical 240 5; then
-  if [ -n "${INFISICAL_CLIENT_ID:-}" ] && [ -n "${INFISICAL_CLIENT_SECRET:-}" ] && [ -n "${INFISICAL_WORKSPACE_ID:-}" ]; then
-    echo "Seeding secrets in Infisical..."
-    "$SCRIPT_DIR/infisical_seed.sh"
+BASE_SERVICES=()
+declare -A BASE_SEEN=()
+for profile in "${PROFILE_LIST[@]}"; do
+  base="${PROFILE_BASE_SERVICES[$profile]:-}"
+  if [ -n "$base" ]; then
+    read -r -a base_array <<< "$base"
+    for service in "${base_array[@]}"; do
+      if [ -n "$service" ] && [[ -z "${BASE_SEEN[$service]:-}" ]]; then
+        BASE_SEEN[$service]=1
+        BASE_SERVICES+=("$service")
+      fi
+    done
+  fi
+done
+
+if [ ${#BASE_SERVICES[@]} -gt 0 ]; then
+  echo "Starting base services (${BASE_SERVICES[*]})..."
+  docker compose "${COMPOSE_PROFILE_FLAGS[@]}" up -d "${BASE_SERVICES[@]}"
+fi
+
+if profile_selected core; then
+  echo "Waiting for Infisical to become healthy..."
+  if wait_for_service_health infisical 240 5; then
+    if [ -n "${INFISICAL_CLIENT_ID:-}" ] && [ -n "${INFISICAL_CLIENT_SECRET:-}" ] && [ -n "${INFISICAL_WORKSPACE_ID:-}" ]; then
+      echo "Seeding secrets in Infisical..."
+      "$SCRIPT_DIR/infisical_seed.sh"
+    else
+      echo "INFISICAL_* credentials not provided; skipping automatic secret seeding." >&2
+    fi
   else
-    echo "INFISICAL_* credentials not provided; skipping automatic secret seeding." >&2
+    echo "Infisical failed health check. Inspect logs with 'docker compose ${COMPOSE_PROFILE_FLAGS[*]} logs infisical'." >&2
+    exit 1
   fi
-else
-  echo "Infisical failed health check. Inspect logs with 'docker compose logs infisical'." >&2
-  exit 1
 fi
 
-echo "Initializing Airflow metadata database..."
-docker compose --profile bootstrap run --rm airflow-init
-
-echo "Creating MinIO buckets..."
-for bucket in "$MINIO_BUCKET_BRONZE" "$MINIO_BUCKET_SILVER" "$MINIO_BUCKET_GOLD"; do
-  docker run --rm --network "${PROJECT_NETWORK}" \
-    -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
-    minio/mc:latest mb -p "local/$bucket" >/dev/null || true
-done
-
-echo "Running Liquibase migrations for ClickHouse and Postgres..."
-docker compose --profile tools run --rm liquibase --defaultsFile=/workspace/liquibase/liquibase-postgres.properties update
-# ClickHouse plugin may not ship with Liquibase image; command provided for manual execution if driver is available.
-echo "Liquibase for ClickHouse (requires clickhouse driver jar)"
-docker compose --profile tools run --rm -e LIQUIBASE_CLASSPATH=/workspace/liquibase/drivers/liquibase-clickhouse-extension.jar liquibase \
-  --defaultsFile=/workspace/liquibase/liquibase-clickhouse.properties update || echo "ClickHouse Liquibase update skipped (ensure driver present)."
-
-echo "Starting remaining services..."
-docker compose up -d
-
-echo "Waiting for Airbyte API to become reachable..."
-AIRBYTE_HEALTH_URL="${AIRBYTE_API_URL:-http://localhost:8001/api}/v1/health"
-airbyte_ready=false
-for attempt in $(seq 1 120); do
-  if curl -sf "$AIRBYTE_HEALTH_URL" >/dev/null 2>&1; then
-    airbyte_ready=true
-    break
-  fi
-  sleep 5
-done
-
-if [ "$airbyte_ready" != true ]; then
-  echo "Airbyte API did not become ready in time" >&2
-  exit 1
+if [[ -n "${BASE_SEEN[minio]:-}" ]]; then
+  echo "Waiting for MinIO to become healthy..."
+  wait_for_service_health minio 240 5 || echo "MinIO health check timed out; continuing."
+  echo "Creating MinIO buckets..."
+  for bucket in "$MINIO_BUCKET_BRONZE" "$MINIO_BUCKET_SILVER" "$MINIO_BUCKET_GOLD" "$MINIO_BUCKET_MLFLOW"; do
+    docker run --rm --network "${PROJECT_NETWORK}" \
+      -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
+      minio/mc:latest mb -p "local/$bucket" >/dev/null || true
+  done
 fi
 
-echo "Registering Airbyte resources..."
-python3 "$SCRIPT_DIR/bootstrap_airbyte.py"
+if profile_selected core; then
+  echo "Initializing Airflow metadata database..."
+  docker compose "${COMPOSE_PROFILE_FLAGS[@]}" --profile bootstrap run --rm airflow-init
+  echo "Running Liquibase migrations for ClickHouse and Postgres..."
+  docker compose --profile tools run --rm liquibase --defaultsFile=/workspace/liquibase/liquibase-postgres.properties update
+  echo "Liquibase for ClickHouse (requires clickhouse driver jar)"
+  docker compose --profile tools run --rm -e LIQUIBASE_CLASSPATH=/workspace/liquibase/drivers/liquibase-clickhouse-extension.jar liquibase \
+    --defaultsFile=/workspace/liquibase/liquibase-clickhouse.properties update || echo "ClickHouse Liquibase update skipped (ensure driver present)."
+fi
 
-echo "Seeding OpenMetadata ingestion pipelines..."
-python3 "$SCRIPT_DIR/openmetadata_seed.py"
+echo "Starting selected profiles (${PROFILE_LIST[*]})..."
+docker compose "${COMPOSE_PROFILE_FLAGS[@]}" up -d
 
-echo "Injecting Airflow connections and variables..."
-python3 "$SCRIPT_DIR/airflow_setup.py"
+if profile_selected core; then
+  echo "Waiting for Airflow webserver..."
+  wait_for_service_health airflow-webserver 240 10 || echo "Airflow webserver health check timed out; continuing."
+fi
 
-echo "Bootstrap completed. Review README for next steps."
+if profile_selected ml; then
+  echo "Waiting for MLflow tracking server..."
+  wait_for_service_health mlflow 180 5 || echo "MLflow did not report healthy within timeout; check logs."
+fi
+
+if profile_selected ingestion; then
+  echo "Waiting for Airbyte API to become reachable..."
+  AIRBYTE_HEALTH_URL="${AIRBYTE_API_URL:-http://localhost:8001/api}/v1/health"
+  airbyte_ready=false
+  for attempt in $(seq 1 120); do
+    if curl -sf "$AIRBYTE_HEALTH_URL" >/dev/null 2>&1; then
+      airbyte_ready=true
+      break
+    fi
+    sleep 5
+  done
+
+  if [ "$airbyte_ready" != true ]; then
+    echo "Airbyte API did not become ready in time" >&2
+    exit 1
+  fi
+
+  echo "Registering Airbyte resources..."
+  python3 "$SCRIPT_DIR/bootstrap_airbyte.py"
+fi
+
+if profile_selected catalog; then
+  echo "Waiting for OpenMetadata server..."
+  wait_for_service_health openmetadata-server 300 5 || echo "OpenMetadata server health check timed out; continuing."
+  echo "Seeding OpenMetadata ingestion pipelines..."
+  python3 "$SCRIPT_DIR/openmetadata_seed.py"
+fi
+
+if profile_selected core; then
+  echo "Injecting Airflow connections and variables..."
+  python3 "$SCRIPT_DIR/airflow_setup.py"
+fi
+
+echo "Bootstrap completed for profiles: ${PROFILE_LIST[*]}. Review README for next steps."

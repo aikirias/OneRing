@@ -20,7 +20,14 @@
 - [x] Add Grafana dashboards and Prometheus exporters setup.
 - [ ] Register metadata/lineage reporting hooks (stubbed logging in DAG).
 
-## Phase 5 – Documentation & Packaging
+## Phase 5 – ML Feature & Model Lifecycle
+- [x] Add Feast feature repository and sample data set.
+- [x] Wire Spark ML + Hyperopt training with MLflow tracking/registry.
+- [x] Package models with BentoML and expose serving endpoint.
+- [x] Generate Evidently drift reports via scheduled Airflow DAG.
+- [x] Provide Streamlit mini-application consuming Bento endpoint.
+
+## Phase 6 – Documentation & Packaging
 - [x] Complete README with end-to-end instructions and extensions.
 - [x] Add sample data and Airbyte connection templates.
 - [ ] Validate bootstrap (`make bootstrap`, `docker compose up -d`).  # TODO: run once infra available

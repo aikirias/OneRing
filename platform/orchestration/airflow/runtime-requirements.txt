@@ -1,0 +1,11 @@
+feast==0.56.0
+protobuf==4.25.3
+mlflow[s3]==2.9.2
+hyperopt==0.2.7
+pyspark==3.5.1
+evidently==0.4.21
+fsspec==2024.2.0
+bentoml==1.4.27
+pandas==2.2.3
+numpy==2.0.2
+gcsfs==2024.2.0

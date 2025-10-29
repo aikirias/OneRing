@@ -1,0 +1,9 @@
+project: oner_feast
+registry: data/registry.db
+provider: local
+offline_store:
+  type: file
+online_store:
+  type: redis
+  connection_string: redis://redis:6379/0
+entity_key_serialization_version: 2

@@ -1,5 +1,5 @@
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.8.1-python3.11
+  image: apache/airflow:2.10.5-python3.11
   env_file:
     - .env
   environment: &airflow-common-env
@@ -8,13 +8,12 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
     AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW_LOAD_EXAMPLES}
     AIRFLOW__CORE__DEFAULT_TIMEZONE: ${TZ}
-    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
     AIRFLOW__CELERY__FLOWER_URL_PREFIX: /
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_FERNET_KEY}
-    AIRFLOW__API__AUTH_BACKEND: airflow.api.auth.backend.session
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.session
     AIRFLOW__LOGGING__REMOTE_LOGGING: "False"
     AIRFLOW__SECRETS__BACKEND: config.infisical_backend.InfisicalSecretsBackend
     INFISICAL_SERVER_URL: ${INFISICAL_SERVER_URL}
@@ -22,6 +21,15 @@ x-airflow-common: &airflow-common
     INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET}
     INFISICAL_WORKSPACE_ID: ${INFISICAL_WORKSPACE_ID}
     INFISICAL_ENVIRONMENT: ${INFISICAL_ENVIRONMENT}
+    MLFLOW_TRACKING_URI: ${MLFLOW_INTERNAL_TRACKING_URI}
+    MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME}
+    FEAST_REPO_PATH: /opt/airflow/feast_repo
+    FEAST_PROJECT_NAME: ${FEAST_PROJECT_NAME}
+    FEAST_REFERENCE_DATA_PATH: /opt/airflow/storage/data/ml
+    BENTOML_HOME: /home/airflow/bentoml
     AIRFLOW_UID: ${AIRFLOW_UID}
     AIRFLOW_GID: ${AIRFLOW_GID}
     TZ: ${TZ}
@@ -33,6 +41,11 @@ x-airflow-common: &airflow-common
     - ./platform/orchestration/airflow/config:/opt/airflow/config
     - ./platform/quality/great_expectations:/opt/great_expectations
     - ./platform/orchestration/airflow/include:/opt/airflow/include
+    - ./platform/orchestration/airflow/runtime-requirements.txt:/requirements/requirements.txt
+    - ./platform/featurestore/feast_repo:/opt/airflow/feast_repo
+    - ./platform/ml:/opt/airflow/platform/ml
+    - ./storage/data:/opt/airflow/storage/data
+    - bentoml_store:/home/airflow/bentoml
   user: "${AIRFLOW_UID}:${AIRFLOW_GID}"
   depends_on:
     postgres:
@@ -62,6 +75,8 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
+    profiles:
+      - core
     ports:
       - "8793:8793"
     healthcheck:
@@ -74,6 +89,8 @@ services:
   airflow-webserver:
     <<: *airflow-common
     command: webserver
+    profiles:
+      - core
     ports:
       - "8080:8080"
     healthcheck:
@@ -86,10 +103,14 @@ services:
   airflow-triggerer:
     <<: *airflow-common
     command: triggerer
+    profiles:
+      - core
 
   airflow-worker:
     <<: *airflow-common
     command: celery worker
+    profiles:
+      - core
     environment:
       <<: *airflow-common-env
       AIRFLOW__CELERY__WORKER_CONCURRENCY: 4
@@ -97,11 +118,15 @@ services:
   airflow-flower:
     <<: *airflow-common
     command: celery flower
+    profiles:
+      - core
     ports:
       - "5555:5555"
 
   postgres:
     image: postgres:15
+    profiles:
+      - core
     env_file:
       - .env
     environment:
@@ -122,6 +147,8 @@ services:
 
   redis:
     image: redis:7
+    profiles:
+      - core
     command: redis-server --save 20 1 --loglevel warning
     ports:
       - "6379:6379"
@@ -130,6 +157,8 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:23.8
+    profiles:
+      - core
     env_file:
       - .env
     environment:
@@ -148,6 +177,10 @@ services:
 
   minio:
     image: minio/minio:latest
+    profiles:
+      - core
+      - ingestion
+      - ml
     env_file:
       - .env
     command: server /data --console-address ":${MINIO_CONSOLE_PORT}"
@@ -164,6 +197,8 @@ services:
 
   infisical-db:
     image: postgres:15
+    profiles:
+      - core
     environment:
       POSTGRES_DB: infisical
       POSTGRES_USER: infisical
@@ -178,12 +213,16 @@ services:
 
   infisical-redis:
     image: redis:7
+    profiles:
+      - core
     command: redis-server --save 20 1 --loglevel warning
     volumes:
       - infisical_redis:/data
 
   infisical:
     image: infisical/infisical:latest
+    profiles:
+      - core
     env_file:
       - .env
     environment:
@@ -219,6 +258,8 @@ services:
 
   airbyte-db:
     image: postgres:15
+    profiles:
+      - ingestion
     environment:
       POSTGRES_DB: ${AIRBYTE_DATABASE_DB}
       POSTGRES_PASSWORD: ${AIRBYTE_DATABASE_PASSWORD}
@@ -233,6 +274,8 @@ services:
 
   airbyte-temporal:
     image: airbyte/temporal:${AIRBYTE_VERSION}
+    profiles:
+      - ingestion
     env_file:
       - .env
     environment:
@@ -251,6 +294,8 @@ services:
 
   airbyte-temporal-ui:
     image: temporalio/ui:2.42.1
+    profiles:
+      - ingestion
     environment:
       - TEMPORAL_ADDRESS=airbyte-temporal:7233
       - TEMPORAL_CORS_ORIGINS=http://localhost:8000
@@ -259,6 +304,8 @@ services:
 
   airbyte-bootloader:
     image: airbyte/bootloader:${AIRBYTE_VERSION}
+    profiles:
+      - ingestion
     env_file:
       - .env
     environment:
@@ -275,6 +322,8 @@ services:
 
   airbyte-server:
     image: airbyte/server:${AIRBYTE_VERSION}
+    profiles:
+      - ingestion
     env_file:
       - .env
     environment:
@@ -318,6 +367,8 @@ services:
 
   airbyte-worker:
     image: airbyte/worker:${AIRBYTE_VERSION}
+    profiles:
+      - ingestion
     env_file:
       - .env
     environment:
@@ -360,6 +411,8 @@ services:
 
   airbyte-webapp:
     image: airbyte/webapp:${AIRBYTE_VERSION}
+    profiles:
+      - ingestion
     env_file:
       - .env
     environment:
@@ -376,6 +429,8 @@ services:
 
   openmetadata-postgres:
     image: postgres:15
+    profiles:
+      - catalog
     environment:
       POSTGRES_DB: openmetadata
       POSTGRES_USER: ${OPENMETADATA_DB_USER}
@@ -390,6 +445,8 @@ services:
 
   openmetadata-elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.10.4
+    profiles:
+      - catalog
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
@@ -404,6 +461,8 @@ services:
 
   openmetadata-server:
     image: openmetadata/server:1.4.1
+    profiles:
+      - catalog
     env_file:
       - .env
     environment:
@@ -430,6 +489,8 @@ services:
 
   openmetadata-ingestion:
     image: openmetadata/ingestion:1.4.1
+    profiles:
+      - catalog
     env_file:
       - .env
     volumes:
@@ -451,6 +512,8 @@ services:
 
   grafana:
     image: grafana/grafana:10.3.3
+    profiles:
+      - observability
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
@@ -466,10 +529,101 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.49.0
+    profiles:
+      - observability
     volumes:
       - ./platform/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
+
+  mlflow-db:
+    image: postgres:15
+    profiles:
+      - ml
+    environment:
+      POSTGRES_USER: ${MLFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${MLFLOW_BACKEND_DB}
+    volumes:
+      - mlflow_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MLFLOW_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mlflow:
+    build:
+      context: platform/ml/mlflow
+      dockerfile: Dockerfile
+    profiles:
+      - ml
+    env_file:
+      - .env
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    command: >
+      mlflow server
+        --backend-store-uri postgresql://${MLFLOW_DB_USER}:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/${MLFLOW_BACKEND_DB}
+        --default-artifact-root ${MLFLOW_ARTIFACT_ROOT}
+        --host 0.0.0.0
+        --port 5000
+    ports:
+      - "5000:5000"
+    depends_on:
+      mlflow-db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  bentoml:
+    build:
+      context: platform/ml/bento_service
+      dockerfile: Dockerfile
+    profiles:
+      - ml
+    env_file:
+      - .env
+    environment:
+      BENTOML_HOME: /home/bento/bentoml
+      MLFLOW_TRACKING_URI: ${MLFLOW_INTERNAL_TRACKING_URI}
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME}
+    volumes:
+      - bentoml_store:/home/bento/bentoml
+    ports:
+      - "${BENTOML_PORT}:3001"
+    depends_on:
+      mlflow:
+        condition: service_started
+
+  streamlit:
+    build:
+      context: platform/apps/streamlit_app
+      dockerfile: Dockerfile
+    profiles:
+      - ml
+    env_file:
+      - .env
+    environment:
+      BENTO_ENDPOINT: http://bentoml:3001/predict
+    volumes:
+      - ./platform/apps/streamlit_app:/app
+    ports:
+      - "${STREAMLIT_PORT}:8501"
+    depends_on:
+      bentoml:
+        condition: service_started
 
 networks:
   default:
@@ -488,3 +642,5 @@ volumes:
   grafana_data:
   infisical_pg:
   infisical_redis:
+  mlflow_db:
+  bentoml_store:

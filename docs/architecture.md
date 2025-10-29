@@ -12,6 +12,11 @@
 5. **Liquibase** versions schemas for Postgres and ClickHouse targets.
 6. **OpenMetadata** centralizes catalog, lineage, and quality signals.
 7. **Grafana** visualizes operational metrics and validation outcomes.
+8. **Feast** manages feature views (file offline store + Redis online store).
+9. **MLflow** tracks experiments, metrics, and registers Spark models (backed by Postgres + MinIO artifacts).
+10. **BentoML** packages MLflow models for serving and exposes an HTTP endpoint.
+11. **Evidently** runs scheduled drift reports through Airflow.
+12. **Streamlit** offers an optional mini UI consuming the Bento endpoint.
 
 ## High-Level Flow
 ```mermaid
@@ -39,6 +44,18 @@ flowchart LR
     OM -->|Metadata Feeds| GF[Grafana Dashboards]
     CH --> GF
     PG --> GF
+
+    subgraph ML_Pipeline
+        FS[[Feast Feature Repo]]
+        MIO -->|Historical Snapshot| FS
+        AF3[[Airflow ML DAG]] -->|Feature Retrieval| FS
+        AF3 -->|Training Metrics| MLW[MLflow Tracking Server]
+        MLW -->|Registered Model| Bento[BentoML Service]
+        Bento -->|Predictions| App[Streamlit Mini-App]
+        AF3 -->|Daily Drift| Evidently[Evidently Reports]
+        Evidently --> OM
+        MLW --> GF
+    end
 ```
 
 ## Networking & Security
@@ -55,6 +72,8 @@ flowchart LR
   - `platform/catalog/openmetadata` – server and ingestion configs.
   - `platform/analytics/{clickhouse,postgres}` – DDL, init SQL, curated seeds.
   - `platform/storage/medallion` – local Bronze/Silver/Gold samples.
+  - `platform/featurestore/feast_repo` – Feast project configuration and feature views.
+  - `platform/ml/{training,bento_service}` – Spark ML pipeline code and Bento service assets.
   - `platform/versioning/liquibase` – changelogs and property files.
   - `platform/security/infisical` – vault configuration & onboarding scripts (`INFISICAL_*` settings).
   - `platform/observability/{grafana,prometheus}` – dashboards, scrape configs.
