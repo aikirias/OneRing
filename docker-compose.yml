@@ -159,6 +159,7 @@ services:
     image: clickhouse/clickhouse-server:23.8
     profiles:
       - core
+      - analytics
     env_file:
       - .env
     environment:
@@ -625,6 +626,25 @@ services:
       bentoml:
         condition: service_started
 
+  metabase:
+    image: metabase/metabase:v0.49.10
+    profiles:
+      - analytics
+    env_file:
+      - .env
+    environment:
+      MB_DB_FILE: /metabase-data/metabase.db
+      MB_PLUGINS_DIR: /plugins
+      MB_EMOJI_IN_LOGS: "true"
+    ports:
+      - "${METABASE_PORT}:3000"
+    depends_on:
+      clickhouse:
+        condition: service_started
+    volumes:
+      - metabase_data:/metabase-data
+      - ./platform/analytics/metabase/plugins:/plugins
+
 networks:
   default:
     name: ${PROJECT_NETWORK}
@@ -644,3 +664,4 @@ volumes:
   infisical_redis:
   mlflow_db:
   bentoml_store:
+  metabase_data:

@@ -17,6 +17,7 @@
 10. **BentoML** packages MLflow models for serving and exposes an HTTP endpoint.
 11. **Evidently** runs scheduled drift reports through Airflow.
 12. **Streamlit** offers an optional mini UI consuming the Bento endpoint.
+13. **Metabase** provides ad-hoc analytics on ClickHouse/Postgres (requires ClickHouse driver plugin).
 
 ## High-Level Flow
 ```mermaid
@@ -44,6 +45,8 @@ flowchart LR
     OM -->|Metadata Feeds| GF[Grafana Dashboards]
     CH --> GF
     PG --> GF
+    CH -->|BI Queries| MB[Metabase]
+    PG --> MB
 
     subgraph ML_Pipeline
         FS[[Feast Feature Repo]]
@@ -71,6 +74,7 @@ flowchart LR
   - `platform/quality/great_expectations` – suites, checkpoints, runtime data.
   - `platform/catalog/openmetadata` – server and ingestion configs.
   - `platform/analytics/{clickhouse,postgres}` – DDL, init SQL, curated seeds.
+  - `platform/analytics/metabase` – Metabase plugins (ClickHouse driver) and related assets.
   - `platform/storage/medallion` – local Bronze/Silver/Gold samples.
   - `platform/featurestore/feast_repo` – Feast project configuration and feature views.
   - `platform/ml/{training,bento_service}` – Spark ML pipeline code and Bento service assets.

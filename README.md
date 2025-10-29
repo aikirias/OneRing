@@ -17,6 +17,7 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
 | Experiment Tracking & Registry | MLflow (Postgres backend + MinIO artifact store) |
 | Model Serving | BentoML service & container |
 | ML Monitoring | Evidently (daily drift reports) |
+| Business Intelligence | Metabase (with ClickHouse driver) |
 | Demo UI | Streamlit mini-app |
 | Secrets Handling | Infisical (optional vault) + environment variables |
 | Observability | Prometheus + Grafana |
@@ -66,6 +67,7 @@ The Compose file is partitioned into profiles so you can start only what you nee
 | `core` | Airflow scheduler/webserver/worker/triggerer/flower, Postgres (metastore & gold), Redis, ClickHouse, MinIO, Infisical | Baseline medallion pipelines, secrets, storage |
 | `ingestion` | Airbyte server/worker/webapp, Temporal & workspace Postgres, reused MinIO | Self-service ingestion into Bronze (MinIO) |
 | `catalog` | OpenMetadata server, Postgres, Elasticsearch, ingestion container | Metadata, lineage, glossary demos |
+| `analytics` | ClickHouse service + Metabase UI (ClickHouse driver auto-installed) | Ad-hoc SQL exploration and dashboards |
 | `ml` | MLflow + Postgres backend, BentoML service, Streamlit mini-app, reused MinIO | Feature + model lifecycle, serving & monitoring |
 | `observability` | Prometheus, Grafana | Metrics dashboards and alerts |
 
@@ -111,6 +113,24 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
    ```
 4. **Optional mini-app**: open the Streamlit UI at `http://localhost:8501` to score customers interactively.
 5. **Daily monitoring**: the `evidently_drift_report` DAG runs a drift report with Evidently, storing HTML outputs in `storage/data/ml/reports/`. Review the latest report after the DAG finishes.
+
+## Analytics Exploration (Metabase)
+
+> Profile to run: `analytics` (includes ClickHouse). Run `make bootstrap PROFILES="analytics"` once to fetch the ClickHouse driver automatically, or execute `./ops/scripts/metabase_clickhouse_driver.sh` manually.
+
+1. Launch Metabase + ClickHouse:
+   ```bash
+   make up-analytics
+   ```
+2. Visit `http://localhost:3030` and complete the initial Metabase setup.
+3. Add a ClickHouse database using:
+   - Host: `clickhouse`
+   - Port: `8123`
+   - Database: `analytics`
+   - Username / Password: values from `.env` (`CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD`)
+4. Explore Silver/Gold tables (e.g., `analytics.orders_clean`) or build dashboards on top of the medallion flows.
+
+> If the ClickHouse driver fails to download, rerun `./ops/scripts/metabase_clickhouse_driver.sh` with network access, then restart (`make down PROFILES="analytics" && make up-analytics`).
 
 ## Observability & Catalog
 

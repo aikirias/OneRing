@@ -134,6 +134,7 @@ declare -A PROFILE_BASE_SERVICES=(
   [ingestion]="minio airbyte-db"
   [catalog]="openmetadata-postgres openmetadata-elasticsearch"
   [ml]="minio mlflow-db"
+  [analytics]="clickhouse"
   [observability]="prometheus"
 )
 
@@ -191,6 +192,13 @@ if profile_selected core; then
   echo "Liquibase for ClickHouse (requires clickhouse driver jar)"
   docker compose --profile tools run --rm -e LIQUIBASE_CLASSPATH=/workspace/liquibase/drivers/liquibase-clickhouse-extension.jar liquibase \
     --defaultsFile=/workspace/liquibase/liquibase-clickhouse.properties update || echo "ClickHouse Liquibase update skipped (ensure driver present)."
+fi
+
+if profile_selected analytics; then
+  echo "Ensuring Metabase ClickHouse driver plugin..."
+  if ! "$SCRIPT_DIR/metabase_clickhouse_driver.sh"; then
+    echo "Metabase ClickHouse driver download failed; Metabase may not connect to ClickHouse. See README for manual steps." >&2
+  fi
 fi
 
 echo "Starting selected profiles (${PROFILE_LIST[*]})..."
