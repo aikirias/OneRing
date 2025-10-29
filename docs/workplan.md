@@ -14,6 +14,7 @@
 - [x] Implement Airflow DAGs for Bronze → Silver → Gold flow.
 - [x] Configure Great Expectations suites and checkpoints.
 - [x] Seed Liquibase changelogs for Postgres and ClickHouse.
+- [x] Provision Spark & Flink clusters alongside ingestion services.
 
 ## Phase 4 – Catalog & Observability
 - [x] Configure OpenMetadata ingestion pipelines.

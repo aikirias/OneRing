@@ -428,6 +428,65 @@ services:
       airbyte-bootloader:
         condition: service_completed_successfully
 
+  spark-master:
+    image: bitnami/spark:3.5.1
+    profiles:
+      - ingestion
+    environment:
+      SPARK_MODE: master
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+    ports:
+      - "${SPARK_MASTER_RPC_PORT}:7077"
+      - "${SPARK_MASTER_WEB_PORT}:8080"
+
+  spark-worker:
+    image: bitnami/spark:3.5.1
+    profiles:
+      - ingestion
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 1G
+      SPARK_WORKER_CORES: 1
+      SPARK_WORKER_WEBUI_PORT: 8081
+    ports:
+      - "${SPARK_WORKER_WEB_PORT}:8081"
+    depends_on:
+      - spark-master
+
+  flink-jobmanager:
+    image: flink:1.17-scala_2.12-java11
+    profiles:
+      - ingestion
+    command: jobmanager
+    ports:
+      - "${FLINK_REST_PORT}:8081"
+      - "${FLINK_RPC_PORT}:6123"
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        jobmanager.heap.size: 512m
+        rest.port: 8081
+        rest.address: 0.0.0.0
+        rest.bind-address: 0.0.0.0
+
+  flink-taskmanager:
+    image: flink:1.17-scala_2.12-java11
+    profiles:
+      - ingestion
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        taskmanager.heap.size: 512m
+    depends_on:
+      - flink-jobmanager
+
   openmetadata-postgres:
     image: postgres:15
     profiles:

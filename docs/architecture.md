@@ -7,17 +7,19 @@
 ## Core Components
 1. **Airflow** orchestrates ingestion, validation, and transformations.
 2. **Airbyte** enables self-service ingestion to Bronze (MinIO).
-3. **MinIO** stores data lake zones (Bronze/Silver/Gold) with S3 compatibility.
-4. **Great Expectations** validates data quality during DAG execution.
-5. **Liquibase** versions schemas for Postgres and ClickHouse targets.
-6. **OpenMetadata** centralizes catalog, lineage, and quality signals.
-7. **Grafana** visualizes operational metrics and validation outcomes.
-8. **Feast** manages feature views (file offline store + Redis online store).
-9. **MLflow** tracks experiments, metrics, and registers Spark models (backed by Postgres + MinIO artifacts).
-10. **BentoML** packages MLflow models for serving and exposes an HTTP endpoint.
-11. **Evidently** runs scheduled drift reports through Airflow.
-12. **Streamlit** offers an optional mini UI consuming the Bento endpoint.
-13. **Metabase** provides ad-hoc analytics on ClickHouse/Postgres (requires ClickHouse driver plugin).
+3. **Apache Spark** provides distributed batch processing for ingestion and ML workloads.
+4. **Apache Flink** powers streaming-oriented demos and CEP experiments.
+5. **MinIO** stores data lake zones (Bronze/Silver/Gold) with S3 compatibility.
+6. **Great Expectations** validates data quality during DAG execution.
+7. **Liquibase** versions schemas for Postgres and ClickHouse targets.
+8. **OpenMetadata** centralizes catalog, lineage, and quality signals.
+9. **Grafana** visualizes operational metrics and validation outcomes.
+10. **Feast** manages feature views (file offline store + Redis online store).
+11. **MLflow** tracks experiments, metrics, and registers Spark models (backed by Postgres + MinIO artifacts).
+12. **BentoML** packages MLflow models for serving and exposes an HTTP endpoint.
+13. **Evidently** runs scheduled drift reports through Airflow.
+14. **Streamlit** offers an optional mini UI consuming the Bento endpoint.
+15. **Metabase** provides ad-hoc analytics on ClickHouse/Postgres (requires ClickHouse driver plugin).
 
 ## High-Level Flow
 ```mermaid
@@ -25,6 +27,8 @@ flowchart LR
     subgraph Bronze
         AB[Airbyte Connector]
         AB -->|Write| MIO[(MinIO Bronze Bucket)]
+        Spark[[Spark Jobs]] -->|Load/Transform| MIO
+        Flink[[Flink Jobs]] -->|Stream| MIO
     end
 
     subgraph Silver
@@ -40,6 +44,8 @@ flowchart LR
 
     GE -->|Quality Events| OM[OpenMetadata]
     AF --> OM
+    Spark --> AF
+    Flink --> OM
     AB --> OM
 
     OM -->|Metadata Feeds| GF[Grafana Dashboards]

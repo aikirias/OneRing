@@ -7,7 +7,7 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
 | Capability | Tooling |
 | --- | --- |
 | Orchestration & Batch | Apache Airflow (Celery executor) |
-| Ingestion | Airbyte (server, worker, webapp, Temporal) |
+| Ingestion & Streaming | Airbyte (server, worker, webapp, Temporal), Apache Spark (master/worker), Apache Flink (job/task managers) |
 | Object Storage | MinIO (S3 compatible) |
 | Warehouses | ClickHouse (Silver analytics), Postgres (Gold curated & Airflow metastore) |
 | Data Quality | Great Expectations |
@@ -65,7 +65,7 @@ The Compose file is partitioned into profiles so you can start only what you nee
 | Profile | Key services | Purpose |
 | --- | --- | --- |
 | `core` | Airflow scheduler/webserver/worker/triggerer/flower, Postgres (metastore & gold), Redis, ClickHouse, MinIO, Infisical | Baseline medallion pipelines, secrets, storage |
-| `ingestion` | Airbyte server/worker/webapp, Temporal & workspace Postgres, reused MinIO | Self-service ingestion into Bronze (MinIO) |
+| `ingestion` | Airbyte server/worker/webapp + Temporal, ClickHouse ingest helpers, Spark master/worker, Flink job/task managers | Self-service ingestion, batch/stream processing into Bronze |
 | `catalog` | OpenMetadata server, Postgres, Elasticsearch, ingestion container | Metadata, lineage, glossary demos |
 | `analytics` | ClickHouse service + Metabase UI (ClickHouse driver auto-installed) | Ad-hoc SQL exploration and dashboards |
 | `ml` | MLflow + Postgres backend, BentoML service, Streamlit mini-app, reused MinIO | Feature + model lifecycle, serving & monitoring |
@@ -113,6 +113,16 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
    ```
 4. **Optional mini-app**: open the Streamlit UI at `http://localhost:8501` to score customers interactively.
 5. **Daily monitoring**: the `evidently_drift_report` DAG runs a drift report with Evidently, storing HTML outputs in `storage/data/ml/reports/`. Review the latest report after the DAG finishes.
+
+## Spark & Flink Services
+
+> Profile to run: `ingestion` (services start alongside Airbyte).
+
+- Spark master UI: `http://localhost:8081` (override via `SPARK_MASTER_WEB_PORT`).
+- Spark worker UI: `http://localhost:8084` (override via `SPARK_WORKER_WEB_PORT`).
+- Flink dashboard & REST API: `http://localhost:8090` (override via `FLINK_REST_PORT`).
+- Submit ad-hoc Spark jobs: `docker compose exec spark-master spark-submit --master spark://spark-master:7077 <job.py>`.
+- Deploy Flink jobs: `docker compose exec flink-jobmanager flink run --detached /path/to/job.jar` (mount jars or bind volumes as needed).
 
 ## Analytics Exploration (Metabase)
 
