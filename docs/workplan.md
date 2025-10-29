@@ -32,6 +32,10 @@
 - [x] Add Metabase service with ClickHouse driver automation.
 - [x] Provide dedicated Make target/profile for ClickHouse + Metabase.
 
+## Phase 5c – Messaging & CI/CD
+- [x] Integrate Apache Pulsar standalone broker with dedicated profile.
+- [x] Add Jenkins LTS service with JCasC-ready mounts.
+
 ## Phase 6 – Documentation & Packaging
 - [x] Complete README with end-to-end instructions and extensions.
 - [x] Add sample data and Airbyte connection templates.

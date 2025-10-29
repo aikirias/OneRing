@@ -8,6 +8,7 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
 | --- | --- |
 | Orchestration & Batch | Apache Airflow (Celery executor) |
 | Ingestion & Streaming | Airbyte (server, worker, webapp, Temporal), Apache Spark (master/worker), Apache Flink (job/task managers) |
+| Messaging & Queues | Apache Pulsar (standalone broker + admin) |
 | Object Storage | MinIO (S3 compatible) |
 | Warehouses | ClickHouse (Silver analytics), Postgres (Gold curated & Airflow metastore) |
 | Data Quality | Great Expectations |
@@ -66,10 +67,12 @@ The Compose file is partitioned into profiles so you can start only what you nee
 | --- | --- | --- |
 | `core` | Airflow scheduler/webserver/worker/triggerer/flower, Postgres (metastore & gold), Redis, ClickHouse, MinIO, Infisical | Baseline medallion pipelines, secrets, storage |
 | `ingestion` | Airbyte server/worker/webapp + Temporal, ClickHouse ingest helpers, Spark master/worker, Flink job/task managers | Self-service ingestion, batch/stream processing into Bronze |
+| `streaming` | Apache Pulsar standalone broker & admin API | Event bus, pub/sub, streaming ingestion |
 | `catalog` | OpenMetadata server, Postgres, Elasticsearch, ingestion container | Metadata, lineage, glossary demos |
 | `analytics` | ClickHouse service + Metabase UI (ClickHouse driver auto-installed) | Ad-hoc SQL exploration and dashboards |
 | `ml` | MLflow + Postgres backend, BentoML service, Streamlit mini-app, reused MinIO | Feature + model lifecycle, serving & monitoring |
 | `observability` | Prometheus, Grafana | Metrics dashboards and alerts |
+| `cicd` | Jenkins LTS with Configuration-as-Code mounts | CI/CD pipelines, automation demos |
 
 Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are used internally by scripts.
 
@@ -124,6 +127,23 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 - Submit ad-hoc Spark jobs: `docker compose exec spark-master spark-submit --master spark://spark-master:7077 <job.py>`.
 - Deploy Flink jobs: `docker compose exec flink-jobmanager flink run --detached /path/to/job.jar` (mount jars or bind volumes as needed).
 
+## Pulsar Messaging
+
+> Profile to run: `streaming`.
+
+- Start Pulsar standalone:
+  ```bash
+  make up PROFILES="streaming"
+  ```
+- Broker binary protocol: `pulsar://localhost:${PULSAR_BINARY_PORT}` (default `6650`).
+- Admin/HTTP API and dashboard proxy: `http://localhost:${PULSAR_HTTP_PORT}` (default `8087`).
+- Example topic creation:
+  ```bash
+  docker compose exec pulsar bin/pulsar-admin topics create persistent://public/default/demo-topic
+  docker compose exec pulsar bin/pulsar-client produce persistent://public/default/demo-topic -m "hello from oner"
+  ```
+- Integrate with Flink/Spark by pointing their connectors at the broker URL above.
+
 ## Analytics Exploration (Metabase)
 
 > Profile to run: `analytics` (includes ClickHouse). Run `make bootstrap PROFILES="analytics"` once to fetch the ClickHouse driver automatically, or execute `./ops/scripts/metabase_clickhouse_driver.sh` manually.
@@ -141,6 +161,19 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 4. Explore Silver/Gold tables (e.g., `analytics.orders_clean`) or build dashboards on top of the medallion flows.
 
 > If the ClickHouse driver fails to download, rerun `./ops/scripts/metabase_clickhouse_driver.sh` with network access, then restart (`make down PROFILES="analytics" && make up-analytics`).
+
+## CI/CD Automation (Jenkins)
+
+> Profile to run: `cicd`.
+
+- Launch Jenkins:
+  ```bash
+  make up-cicd
+  ```
+- Access UI at `http://localhost:${JENKINS_HTTP_PORT}` (default `8086`), agent port forwarded on `${JENKINS_AGENT_PORT}`.
+- Jenkins Configuration-as-Code files live in `platform/cicd/jenkins/casc/`; drop YAML there and restart the container to auto-apply.
+- Seed jobs by placing folders or pipelines inside `platform/cicd/jenkins/jobs/` before bootstrapping, or by using the UI once running.
+- The bootstrap script waits for Jenkins health, but initial plugin downloads can take a minute—check logs with `docker compose logs jenkins` if the UI is not ready yet.
 
 ## Observability & Catalog
 
@@ -185,14 +218,16 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 │   ├── openmetadata_seed.py
 │   ├── airflow_setup.py
 │   └── seed_minio.py
-├── platform/
-│   ├── orchestration/airflow/{dags,config,include,tests}
-│   ├── ingestion/airbyte/config
-│   ├── quality/great_expectations/{expectations,checkpoints}
-│   ├── catalog/openmetadata/ingestion
-│   ├── featurestore/feast_repo
-│   ├── analytics/{clickhouse,postgres}
-│   ├── storage/medallion/{bronze,silver,gold}
+  ├── platform/
+  │   ├── orchestration/airflow/{dags,config,include,tests}
+  │   ├── ingestion/airbyte/config
+  │   ├── quality/great_expectations/{expectations,checkpoints}
+  │   ├── catalog/openmetadata/ingestion
+  │   ├── streaming/pulsar
+  │   ├── featurestore/feast_repo
+  │   ├── analytics/{clickhouse,postgres}
+  │   ├── cicd/jenkins/{casc,jobs}
+  │   ├── storage/medallion/{bronze,silver,gold}
 │   ├── ml/{training,bento_service}
 │   ├── versioning/liquibase
 │   ├── security/infisical

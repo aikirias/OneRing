@@ -135,6 +135,8 @@ declare -A PROFILE_BASE_SERVICES=(
   [catalog]="openmetadata-postgres openmetadata-elasticsearch"
   [ml]="minio mlflow-db"
   [analytics]="clickhouse"
+  [streaming]="pulsar"
+  [cicd]="jenkins"
   [observability]="prometheus"
 )
 
@@ -240,6 +242,16 @@ if profile_selected catalog; then
   wait_for_service_health openmetadata-server 300 5 || echo "OpenMetadata server health check timed out; continuing."
   echo "Seeding OpenMetadata ingestion pipelines..."
   python3 "$SCRIPT_DIR/openmetadata_seed.py"
+fi
+
+if profile_selected streaming; then
+  echo "Waiting for Pulsar broker..."
+  wait_for_service_health pulsar 240 10 || echo "Pulsar health check timed out; inspect logs if issues persist."
+fi
+
+if profile_selected cicd; then
+  echo "Waiting for Jenkins UI..."
+  wait_for_service_health jenkins 300 10 || echo "Jenkins health check timed out; the UI may still be initializing."
 fi
 
 if profile_selected core; then

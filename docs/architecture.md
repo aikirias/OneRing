@@ -7,19 +7,21 @@
 ## Core Components
 1. **Airflow** orchestrates ingestion, validation, and transformations.
 2. **Airbyte** enables self-service ingestion to Bronze (MinIO).
-3. **Apache Spark** provides distributed batch processing for ingestion and ML workloads.
-4. **Apache Flink** powers streaming-oriented demos and CEP experiments.
-5. **MinIO** stores data lake zones (Bronze/Silver/Gold) with S3 compatibility.
-6. **Great Expectations** validates data quality during DAG execution.
-7. **Liquibase** versions schemas for Postgres and ClickHouse targets.
-8. **OpenMetadata** centralizes catalog, lineage, and quality signals.
-9. **Grafana** visualizes operational metrics and validation outcomes.
-10. **Feast** manages feature views (file offline store + Redis online store).
-11. **MLflow** tracks experiments, metrics, and registers Spark models (backed by Postgres + MinIO artifacts).
-12. **BentoML** packages MLflow models for serving and exposes an HTTP endpoint.
-13. **Evidently** runs scheduled drift reports through Airflow.
-14. **Streamlit** offers an optional mini UI consuming the Bento endpoint.
-15. **Metabase** provides ad-hoc analytics on ClickHouse/Postgres (requires ClickHouse driver plugin).
+3. **Apache Pulsar** acts as the distributed messaging and streaming backbone.
+4. **Apache Spark** provides distributed batch processing for ingestion and ML workloads.
+5. **Apache Flink** powers streaming-oriented demos and CEP experiments.
+6. **MinIO** stores data lake zones (Bronze/Silver/Gold) with S3 compatibility.
+7. **Great Expectations** validates data quality during DAG execution.
+8. **Liquibase** versions schemas for Postgres and ClickHouse targets.
+9. **OpenMetadata** centralizes catalog, lineage, and quality signals.
+10. **Grafana** visualizes operational metrics and validation outcomes.
+11. **Feast** manages feature views (file offline store + Redis online store).
+12. **MLflow** tracks experiments, metrics, and registers Spark models (backed by Postgres + MinIO artifacts).
+13. **BentoML** packages MLflow models for serving and exposes an HTTP endpoint.
+14. **Evidently** runs scheduled drift reports through Airflow.
+15. **Streamlit** offers an optional mini UI consuming the Bento endpoint.
+16. **Metabase** provides ad-hoc analytics on ClickHouse/Postgres (requires ClickHouse driver plugin).
+17. **Jenkins** delivers CI/CD automation via JCasC-ready configuration.
 
 ## High-Level Flow
 ```mermaid
@@ -29,6 +31,7 @@ flowchart LR
         AB -->|Write| MIO[(MinIO Bronze Bucket)]
         Spark[[Spark Jobs]] -->|Load/Transform| MIO
         Flink[[Flink Jobs]] -->|Stream| MIO
+        Pulsar(((Pulsar Topics))) -->|Bronze Stream| MIO
     end
 
     subgraph Silver
@@ -45,6 +48,8 @@ flowchart LR
     GE -->|Quality Events| OM[OpenMetadata]
     AF --> OM
     Spark --> AF
+    Spark --> Pulsar
+    Flink --> Pulsar
     Flink --> OM
     AB --> OM
 
@@ -53,6 +58,9 @@ flowchart LR
     PG --> GF
     CH -->|BI Queries| MB[Metabase]
     PG --> MB
+    Pulsar --> GF
+    Pulsar --> MB
+    Jenkins[[Jenkins CI/CD]] --> GF
 
     subgraph ML_Pipeline
         FS[[Feast Feature Repo]]

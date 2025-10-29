@@ -491,6 +491,28 @@ services:
     depends_on:
       - flink-jobmanager
 
+  pulsar:
+    image: apachepulsar/pulsar:3.1.1
+    profiles:
+      - streaming
+    command: >
+      bash -c "bin/apply-config-from-env.py conf/standalone.conf && bin/pulsar standalone"
+    environment:
+      PULSAR_MEM: "-Xms512m -Xmx512m -XX:MaxDirectMemorySize=1g"
+      PULSAR_PREFIX_webServicePort: 8080
+      PULSAR_PREFIX_brokerServicePort: 6650
+    ports:
+      - "${PULSAR_BINARY_PORT}:6650"
+      - "${PULSAR_HTTP_PORT}:8080"
+    volumes:
+      - pulsar_data:/pulsar/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/admin/v2/brokers/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+
   openmetadata-postgres:
     image: postgres:15
     profiles:
@@ -708,6 +730,28 @@ services:
       - metabase_data:/metabase-data
       - ./platform/analytics/metabase/plugins:/plugins
 
+  jenkins:
+    image: jenkins/jenkins:lts
+    profiles:
+      - cicd
+    user: root
+    environment:
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=false"
+      CASC_JENKINS_CONFIG: /var/jenkins_home/casc_configs
+    ports:
+      - "${JENKINS_HTTP_PORT}:8080"
+      - "${JENKINS_AGENT_PORT}:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - ./platform/cicd/jenkins/casc:/var/jenkins_home/casc_configs
+      - ./platform/cicd/jenkins/jobs:/var/jenkins_home/jobs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
 networks:
   default:
     name: ${PROJECT_NETWORK}
@@ -728,3 +772,5 @@ volumes:
   mlflow_db:
   bentoml_store:
   metabase_data:
+  pulsar_data:
+  jenkins_home:
