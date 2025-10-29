@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: orders_summary
+    description: "Monthly revenue and order counts by customer derived from staging orders."
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+      - name: order_month
+        tests:
+          - not_null
+      - name: avg_completed_order_value
+        tests:
+          - not_null

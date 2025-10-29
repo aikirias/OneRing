@@ -7,8 +7,10 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
 | Capability | Tooling |
 | --- | --- |
 | Orchestration & Batch | Apache Airflow (Celery executor) |
-| Ingestion & Streaming | Airbyte (server, worker, webapp, Temporal), Apache Spark (master/worker), Apache Flink (job/task managers) |
+| Ingestion & Streaming | Airbyte (server, worker, webapp, Temporal), Debezium Server (Postgres CDC -> Pulsar), Apache Spark (master/worker), Apache Flink (job/task managers) |
 | Messaging & Queues | Apache Pulsar (standalone broker + admin) |
+| Table Format & Catalog | Apache Iceberg REST catalog (S3-backed) |
+| SQL Query Engine | Trino (Iceberg + Postgres connectors) |
 | Object Storage | MinIO (S3 compatible) |
 | Warehouses | ClickHouse (Silver analytics), Postgres (Gold curated & Airflow metastore) |
 | Data Quality | Great Expectations |
@@ -20,6 +22,7 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
 | ML Monitoring | Evidently (daily drift reports) |
 | Business Intelligence | Metabase (with ClickHouse driver) |
 | Demo UI | Streamlit mini-app |
+| Identity & Access | Keycloak (IAM & RBAC provider) |
 | Secrets Handling | Infisical (optional vault) + environment variables |
 | Observability | Prometheus + Grafana |
 
@@ -127,19 +130,25 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 - Submit ad-hoc Spark jobs: `docker compose exec spark-master spark-submit --master spark://spark-master:7077 <job.py>`.
 - Deploy Flink jobs: `docker compose exec flink-jobmanager flink run --detached /path/to/job.jar` (mount jars or bind volumes as needed).
 
-## Streaming (Pulsar & Flink)
+## Streaming (Pulsar, Debezium & Flink)
 
-> Profiles to run: `streaming` (Pulsar) + `ingestion` (Flink cluster).
+> Profiles to run: `streaming` (Pulsar + Debezium) and optionally `ingestion` for Flink jobs.
 
-- Launch Pulsar and the Flink JobManager/TaskManager together:
+- Launch the streaming stack (Pulsar broker, Debezium server, optional Flink cluster):
   ```bash
-  make up PROFILES="streaming ingestion"
+  make up PROFILES="core streaming"
+  # append ingestion if you also want Flink
   ```
 - Broker binary protocol: `pulsar://localhost:${PULSAR_BINARY_PORT}` (default `6650`); REST/admin UI: `http://localhost:${PULSAR_HTTP_PORT}` (default `8087`). Flink REST dashboard: `http://localhost:${FLINK_REST_PORT}` (default `8090`).
+- Debezium pulls CDC events from the curated Postgres database using `ops/scripts/bootstrap.sh`-provisioned credentials and streams them into `${DEBEZIUM_PULSAR_TOPIC}` (default `persistent://public/default/oner.orders`). Adjust the include lists in `.env` if you need different schemas/tables.
 - Register topics and verify Pulsar connectivity:
   ```bash
   docker compose exec pulsar bin/pulsar-admin topics create persistent://public/default/demo-topic
   docker compose exec pulsar bin/pulsar-client produce persistent://public/default/demo-topic -m "hello from oner"
+  ```
+- Tail CDC output end-to-end:
+  ```bash
+  docker compose exec pulsar bin/pulsar-client consume ${DEBEZIUM_PULSAR_TOPIC} -s demo-subscriber -n 5
   ```
 - Deploy a streaming job to Flink once the cluster is up:
   ```bash
@@ -147,7 +156,23 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
   docker compose exec flink-jobmanager flink list
   ```
   Mount your compiled jars under `platform/streaming/flink/jobs/` (bind in `docker-compose.yml`) or use a volume override when launching Compose.
-- Integrate Flink or Spark connectors by targeting the Pulsar broker URL above; use the REST dashboard to monitor job status and metrics.
+- Iceberg REST catalog: `http://localhost:${ICEBERG_REST_PORT}`. Confirm availability with `curl http://localhost:${ICEBERG_REST_PORT}/v1/config`. The catalog stores tables in the `${MINIO_BUCKET_ICEBERG}` bucket on MinIO.
+- Integrate Flink or Spark connectors by targeting the Pulsar broker URL above; use the REST dashboard to monitor job status and metrics. CDC consumers can subscribe to `${DEBEZIUM_TOPIC_PREFIX}`-prefixed topics or the explicit sink topic configured above.
+- Example Spark session (inside the `spark-master` container) that leverages the Iceberg REST catalog:
+  ```bash
+  docker compose exec spark-master spark-sql \
+    --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2 \
+    --conf spark.sql.catalog.rest=org.apache.iceberg.spark.SparkCatalog \
+    --conf spark.sql.catalog.rest.type=rest \
+    --conf spark.sql.catalog.rest.uri=http://iceberg-rest:8181 \
+    --conf spark.sql.catalog.rest.warehouse=s3a://${MINIO_BUCKET_ICEBERG}/warehouse \
+    --conf spark.sql.catalog.rest.io-impl=org.apache.iceberg.aws.s3.S3FileIO \
+    --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
+    --conf spark.hadoop.fs.s3a.access.key=${MINIO_ROOT_USER} \
+    --conf spark.hadoop.fs.s3a.secret.key=${MINIO_ROOT_PASSWORD} \
+    --conf spark.hadoop.fs.s3a.path.style.access=true
+  ```
+  Replace credentials if you use a different MinIO user for Iceberg access.
 
 ## Analytics Exploration (Metabase)
 
@@ -163,9 +188,50 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
    - Port: `8123`
    - Database: `analytics`
    - Username / Password: values from `.env` (`CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD`)
+
+### dbt Models (Postgres Gold)
+
+- Project root: `platform/analytics/dbt`. Install deps within the container:
+  ```bash
+  docker compose exec airflow-webserver bash -lc 'cd /opt/airflow/platform/analytics/dbt && dbt deps'
+  ```
+- Use the included `profiles.yml` (leverages existing `CURATED_PG_*` env vars) and run models against the curated warehouse:
+  ```bash
+  docker compose exec airflow-webserver bash -lc 'cd /opt/airflow/platform/analytics/dbt && dbt run'
+  docker compose exec airflow-webserver bash -lc 'cd /opt/airflow/platform/analytics/dbt && dbt test'
+  ```
+- Outputs materialise in Postgres schemas `staging` and `marts`; bootstrap seeds now live under `platform/storage/postgres/seeds`.
 4. Explore Silver/Gold tables (e.g., `analytics.orders_clean`) or build dashboards on top of the medallion flows.
 
 > If the ClickHouse driver fails to download, rerun `./ops/scripts/metabase_clickhouse_driver.sh` with network access, then restart (`make down PROFILES="analytics" && make up-analytics`).
+
+## Interactive SQL (Trino)
+
+> Profiles to run: `analytics` (automatically brings in Iceberg REST) plus `streaming` if the Iceberg catalog is not already running.
+
+- Launch the stack:
+  ```bash
+  make up PROFILES="core streaming analytics"
+  ```
+- Web UI: `http://localhost:${TRINO_PORT}` (no auth by default). CLI example:
+  ```bash
+  docker compose exec trino trino --execute "SHOW CATALOGS"
+  docker compose exec trino trino --catalog iceberg --schema default --execute "SHOW TABLES"
+  ```
+- The `iceberg` catalog targets the REST catalog backed by MinIO; the `postgres` catalog queries the curated Postgres database. Configure additional catalogs by dropping files under `platform/analytics/trino/etc/catalog/`.
+
+## Identity & RBAC (Keycloak)
+
+> Profile to run: `security` (recommended alongside `core` to reuse existing users and network).
+
+- Start Keycloak with the pre-provisioned "oner" realm:
+  ```bash
+  make up PROFILES="core security"
+  ```
+- Console: `http://localhost:${KEYCLOAK_HTTP_PORT}`. Log in with `${KEYCLOAK_ADMIN}/${KEYCLOAK_ADMIN_PASSWORD}`.
+- Imported realm includes Realm roles (`platform-admin`, `data-analyst`, `data-engineer`), mapped groups, and demo OIDC clients for Trino and Metabase. A seeded realm user (`platform-admin`/`admin`) is provided for initial testing—rotate these credentials immediately in non-demo setups.
+- Extend RBAC by editing the realm JSON in `platform/security/keycloak/realms/oner-realm.json` and restarting Keycloak with `make down PROFILES="security" && make up PROFILES="security"`.
+- Applications can integrate with Keycloak via OpenID Connect; use the realm discovery endpoint `http://localhost:${KEYCLOAK_HTTP_PORT}/realms/oner/.well-known/openid-configuration` for client configuration.
 
 ## CI/CD Automation (Jenkins)
 
@@ -193,6 +259,7 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 ## Secrets & Config Management
 
 - Secrets are sourced from `.env` by default; the stack also includes Infisical (`http://localhost:8082`) so you can wire in a vault if desired. Populate `INFISICAL_*` variables (use base64-encoded 32-byte values for `INFISICAL_ENCRYPTION_KEY` and `INFISICAL_AUTH_SECRET`) and rerun `make bootstrap` to seed secrets automatically via `ops/scripts/infisical_seed.sh`.
+- MinIO staging policies: `ops/scripts/bootstrap.sh` now creates a dedicated bucket `${MINIO_BUCKET_STAGE}` along with a scoped user (`${MINIO_STAGE_USER}`) and policy that limits access to that bucket. Override the defaults in `.env`, rerun `make bootstrap --skip-pull=true`, and distribute only the stage credentials to pipelines that require staging access.
 
 ## Schema Versioning
 

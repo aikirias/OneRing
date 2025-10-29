@@ -1,0 +1,12 @@
+oner_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('CURATED_PG_HOST', 'postgres') }}"
+      port: "{{ env_var('CURATED_PG_PORT', '5432') | as_number }}"
+      user: "{{ env_var('CURATED_PG_USER', 'curated_user') }}"
+      password: "{{ env_var('CURATED_PG_PASSWORD', 'curatedpass') }}"
+      dbname: "{{ env_var('CURATED_PG_DB', 'curated') }}"
+      schema: analytics
+      threads: 4

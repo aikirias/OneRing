@@ -179,11 +179,61 @@ if [[ -n "${BASE_SEEN[minio]:-}" ]]; then
   echo "Waiting for MinIO to become healthy..."
   wait_for_service_health minio 240 5 || echo "MinIO health check timed out; continuing."
   echo "Creating MinIO buckets..."
-  for bucket in "$MINIO_BUCKET_BRONZE" "$MINIO_BUCKET_SILVER" "$MINIO_BUCKET_GOLD" "$MINIO_BUCKET_MLFLOW"; do
+  for bucket in "$MINIO_BUCKET_BRONZE" "$MINIO_BUCKET_SILVER" "$MINIO_BUCKET_GOLD" "$MINIO_BUCKET_MLFLOW" "$MINIO_BUCKET_STAGE" "$MINIO_BUCKET_ICEBERG"; do
+    [ -z "$bucket" ] && continue
     docker run --rm --network "${PROJECT_NETWORK}" \
       -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
       minio/mc:latest mb -p "local/$bucket" >/dev/null || true
+    docker run --rm --network "${PROJECT_NETWORK}" \
+      -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
+      minio/mc:latest anonymous set none "local/$bucket" >/dev/null || true
   done
+  if [ -n "${MINIO_STAGE_USER:-}" ] && [ -n "${MINIO_STAGE_PASSWORD:-}" ] && [ -n "${MINIO_BUCKET_STAGE:-}" ]; then
+    echo "Configuring MinIO staging policy..."
+    STAGE_POLICY_NAME=${MINIO_STAGE_POLICY:-stage-policy}
+    tmp_policy="$(mktemp)"
+    cat <<POLICY > "$tmp_policy"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::${MINIO_BUCKET_STAGE}"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::${MINIO_BUCKET_STAGE}/*"
+      ]
+    }
+  ]
+}
+POLICY
+    docker run --rm --network "${PROJECT_NETWORK}" \
+      -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
+      -v "$tmp_policy:/stage-policy.json" \
+      minio/mc:latest admin policy create local "$STAGE_POLICY_NAME" /stage-policy.json >/dev/null 2>&1 || true
+    docker run --rm --network "${PROJECT_NETWORK}" \
+      -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
+      minio/mc:latest admin user info local "$MINIO_STAGE_USER" >/dev/null 2>&1 || \
+      docker run --rm --network "${PROJECT_NETWORK}" \
+        -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
+        minio/mc:latest admin user add local "$MINIO_STAGE_USER" "$MINIO_STAGE_PASSWORD" >/dev/null 2>&1
+    docker run --rm --network "${PROJECT_NETWORK}" \
+      -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
+      minio/mc:latest admin policy attach local "$STAGE_POLICY_NAME" --user "$MINIO_STAGE_USER" >/dev/null || true
+    rm -f "$tmp_policy"
+  fi
 fi
 
 if profile_selected core; then

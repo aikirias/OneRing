@@ -44,6 +44,7 @@ x-airflow-common: &airflow-common
     - ./platform/orchestration/airflow/runtime-requirements.txt:/requirements/requirements.txt
     - ./platform/featurestore/feast_repo:/opt/airflow/feast_repo
     - ./platform/ml:/opt/airflow/platform/ml
+    - ./platform/analytics/dbt:/opt/airflow/platform/analytics/dbt
     - ./storage/data:/opt/airflow/storage/data
     - bentoml_store:/home/airflow/bentoml
   user: "${AIRFLOW_UID}:${AIRFLOW_GID}"
@@ -134,9 +135,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_DB: ${POSTGRES_DB}
       TZ: ${TZ}
+    command: >
+      postgres
+      -c wal_level=logical
+      -c max_wal_senders=10
+      -c max_replication_slots=10
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./platform/analytics/postgres/seeds:/docker-entrypoint-initdb.d
+      - ./platform/storage/postgres/seeds:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
     healthcheck:
@@ -513,6 +519,87 @@ services:
       retries: 10
       start_period: 40s
 
+  debezium-server:
+    image: quay.io/debezium/server:2.7
+    profiles:
+      - streaming
+    env_file:
+      - .env
+    environment:
+      DEBEZIUM_SOURCE_PORT: ${DEBEZIUM_SOURCE_PORT}
+    volumes:
+      - ./platform/streaming/debezium/application.properties:/debezium/conf/application.properties:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pulsar:
+        condition: service_healthy
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:1.5.1
+    profiles:
+      - streaming
+      - analytics
+    env_file:
+      - .env
+    environment:
+      QUARKUS_HTTP_PORT: 8181
+      CATALOG__NAME: default
+      CATALOG__WAREHOUSE: s3://${MINIO_BUCKET_ICEBERG}/warehouse
+      CATALOG__IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG__AWS__ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      CATALOG__AWS__SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      CATALOG__AWS__REGION: us-east-1
+      CATALOG__S3__ENDPOINT: http://minio:9000
+      CATALOG__S3__PATH_STYLE_ACCESS: "true"
+    depends_on:
+      minio:
+        condition: service_healthy
+    ports:
+      - "${ICEBERG_REST_PORT}:8181"
+
+  trino:
+    image: trinodb/trino:452
+    profiles:
+      - analytics
+    env_file:
+      - .env
+    environment:
+      MINIO_BUCKET_ICEBERG: ${MINIO_BUCKET_ICEBERG}
+    volumes:
+      - ./platform/analytics/trino/etc:/etc/trino
+      - trino_data:/data/trino
+    ports:
+      - "${TRINO_PORT}:8083"
+    depends_on:
+      iceberg-rest:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.4
+    profiles:
+      - security
+    env_file:
+      - .env
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+    command: ["/opt/keycloak/bin/kc.sh", "start-dev", "--http-port=${KEYCLOAK_HTTP_PORT}", "--import-realm"]
+    volumes:
+      - ./platform/security/keycloak:/opt/keycloak/data/import
+    ports:
+      - "${KEYCLOAK_HTTP_PORT}:${KEYCLOAK_HTTP_PORT}"
+    healthcheck:
+      test: ["CMD", "/opt/keycloak/bin/kc.sh", "show-config"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
   openmetadata-postgres:
     image: postgres:15
     profiles:
@@ -589,7 +676,7 @@ services:
     working_dir: /workspace/liquibase
     volumes:
       - ./platform/versioning/liquibase:/workspace/liquibase
-      - ./platform/analytics/postgres/seeds:/workspace/seeds
+      - ./platform/storage/postgres/seeds:/workspace/seeds
     env_file:
       - .env
     profiles:
@@ -774,3 +861,4 @@ volumes:
   metabase_data:
   pulsar_data:
   jenkins_home:
+  trino_data:

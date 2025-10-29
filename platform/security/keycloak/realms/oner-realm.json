@@ -1,0 +1,64 @@
+{
+  "realm": "oner",
+  "enabled": true,
+  "displayName": "OneRing Platform",
+  "registrationAllowed": false,
+  "loginTheme": "keycloak",
+  "roles": {
+    "realm": [
+      { "name": "platform-admin", "description": "Full administrative access" },
+      { "name": "data-analyst", "description": "Query access to analytics tools" },
+      { "name": "data-engineer", "description": "Manage ingestion & orchestration components" }
+    ]
+  },
+  "groups": [
+    {
+      "name": "admins",
+      "realmRoles": ["platform-admin"]
+    },
+    {
+      "name": "analysts",
+      "realmRoles": ["data-analyst"]
+    },
+    {
+      "name": "engineers",
+      "realmRoles": ["data-engineer"]
+    }
+  ],
+  "users": [
+    {
+      "username": "platform-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Platform",
+      "lastName": "Admin",
+      "email": "admin@oner.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ],
+      "groups": ["admins"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "trino",
+      "name": "Trino",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:8083/*"]
+    },
+    {
+      "clientId": "metabase",
+      "name": "Metabase",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:3030/*"]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: gold
+    schema: gold
+    tables:
+      - name: orders_snapshot
+
+models:
+  - name: stg_orders
+    description: "Staging model that enriches the gold orders snapshot with derived metrics."
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+          - unique
+      - name: customer_id
+        tests:
+          - not_null
+      - name: completed_amount
+        description: "Order amount when status is completed, otherwise zero."

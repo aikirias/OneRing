@@ -19,3 +19,18 @@ CREATE SCHEMA IF NOT EXISTS gold;
 GRANT ALL PRIVILEGES ON DATABASE curated TO curated_user;
 GRANT ALL PRIVILEGES ON SCHEMA analytics TO curated_user;
 GRANT ALL PRIVILEGES ON SCHEMA gold TO curated_user;
+
+DO $$
+BEGIN
+   IF NOT EXISTS (
+      SELECT FROM pg_catalog.pg_roles WHERE rolname = 'debezium_user'
+   ) THEN
+      CREATE ROLE debezium_user WITH LOGIN REPLICATION PASSWORD 'debezpass';
+   END IF;
+END
+$$;
+
+GRANT CONNECT ON DATABASE curated TO debezium_user;
+GRANT USAGE ON SCHEMA gold TO debezium_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA gold TO debezium_user;
+ALTER DEFAULT PRIVILEGES FOR ROLE curated_user IN SCHEMA gold GRANT SELECT ON TABLES TO debezium_user;

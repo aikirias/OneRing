@@ -12,7 +12,7 @@ ACCESS_KEY = os.getenv("MINIO_ROOT_USER", "minioadmin")
 SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "minioadmin")
 BRONZE_BUCKET = os.getenv("MINIO_BUCKET_BRONZE", "bronze")
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SAMPLE = ROOT / "platform" / "analytics" / "postgres" / "seeds" / "orders_raw.csv"
+DEFAULT_SAMPLE = ROOT / "platform" / "storage" / "postgres" / "seeds" / "orders_raw.csv"
 FILE_PATH = Path(os.getenv("BRONZE_SAMPLE_FILE", str(DEFAULT_SAMPLE)))
 OBJECT_KEY = os.getenv("BRONZE_OBJECT_KEY", "airbyte/orders/orders_raw.csv")
 
