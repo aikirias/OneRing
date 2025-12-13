@@ -8,13 +8,21 @@
     "realm": [
       { "name": "platform-admin", "description": "Full administrative access" },
       { "name": "data-analyst", "description": "Query access to analytics tools" },
-      { "name": "data-engineer", "description": "Manage ingestion & orchestration components" }
+      { "name": "data-engineer", "description": "Manage ingestion & orchestration components" },
+      {
+        "name": "platform-superuser",
+        "description": "Composite role granting admin, engineering, and analytics permissions",
+        "composite": true,
+        "composites": {
+          "realm": ["platform-admin", "data-analyst", "data-engineer"]
+        }
+      }
     ]
   },
   "groups": [
     {
       "name": "admins",
-      "realmRoles": ["platform-admin"]
+      "realmRoles": ["platform-admin", "platform-superuser"]
     },
     {
       "name": "analysts",
@@ -43,6 +51,39 @@
       "groups": ["admins"]
     }
   ],
+  "components": {
+    "org.keycloak.storage.UserStorageProvider": [
+      {
+        "name": "openldap",
+        "providerId": "ldap",
+        "subComponents": {},
+        "config": {
+          "priority": ["0"],
+          "enabled": ["true"],
+          "fullSyncPeriod": ["-1"],
+          "changedSyncPeriod": ["-1"],
+          "cachePolicy": ["DEFAULT"],
+          "importEnabled": ["true"],
+          "syncRegistrations": ["false"],
+          "vendor": ["other"],
+          "usernameLDAPAttribute": ["uid"],
+          "rdnLDAPAttribute": ["uid"],
+          "uuidLDAPAttribute": ["entryUUID"],
+          "userObjectClasses": ["inetOrgPerson, organizationalPerson"],
+          "usersDn": ["ou=people,dc=oner,dc=local"],
+          "authType": ["simple"],
+          "connectionUrl": ["ldap://openldap:389"],
+          "bindDn": ["cn=admin,dc=oner,dc=local"],
+          "bindCredential": ["admin"],
+          "useTruststoreSpi": ["ldapsOnly"],
+          "pagination": ["true"],
+          "allowKerberosAuthentication": ["false"],
+          "batchSizeForSync": ["1000"],
+          "editMode": ["READ_ONLY"]
+        }
+      }
+    ]
+  },
   "clients": [
     {
       "clientId": "trino",
@@ -59,6 +100,33 @@
       "publicClient": true,
       "directAccessGrantsEnabled": true,
       "redirectUris": ["http://localhost:3030/*"]
+    },
+    {
+      "clientId": "airflow-oauth",
+      "name": "Airflow Web",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "airflow-client-secret",
+      "redirectUris": ["http://localhost:8080/oauth2/callback"],
+      "standardFlowEnabled": true
+    },
+    {
+      "clientId": "airbyte-oauth",
+      "name": "Airbyte Web",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "airbyte-client-secret",
+      "redirectUris": ["http://localhost:8000/oauth2/callback"],
+      "standardFlowEnabled": true
+    },
+    {
+      "clientId": "mlflow-oauth",
+      "name": "MLflow UI",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "mlflow-client-secret",
+      "redirectUris": ["http://localhost:5000/oauth2/callback"],
+      "standardFlowEnabled": true
     }
   ]
 }

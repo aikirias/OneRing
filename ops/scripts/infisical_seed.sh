@@ -30,11 +30,11 @@ fi
 
 echo "Publishing baseline secrets to Infisical workspace $INFISICAL_WORKSPACE_ID ($INFISICAL_ENVIRONMENT)..."
 
-bronze_bucket=${MINIO_BUCKET_BRONZE:-bronze}
-silver_bucket=${MINIO_BUCKET_SILVER:-silver}
+bronze_bucket=${CEPH_BUCKET_BRONZE:-bronze}
+silver_bucket=${CEPH_BUCKET_SILVER:-silver}
 postgres_uri="postgresql+psycopg2://${CURATED_PG_USER:-curated_user}:${CURATED_PG_PASSWORD:-curatedpass}@postgres:5432/curated"
 clickhouse_uri="clickhouse://${CLICKHOUSE_USER:-default}:${CLICKHOUSE_PASSWORD:-clickpass}@clickhouse:8123/analytics"
-minio_uri="aws://?aws_access_key_id=${MINIO_ROOT_USER:-minioadmin}&aws_secret_access_key=${MINIO_ROOT_PASSWORD:-minioadmin}&region_name=us-east-1&endpoint_url=http://minio:9000"
+object_store_uri="aws://?aws_access_key_id=${CEPH_ACCESS_KEY:-cephadmin}&aws_secret_access_key=${CEPH_SECRET_KEY:-cephpass}&region_name=${CEPH_REGION:-us-east-1}&endpoint_url=${CEPH_RGW_ENDPOINT:-http://ceph:9000}"
 airbyte_uri="http://airbyte-server:8001/api/v1"
 
 cat <<JSON | curl -sS -X PUT "$API_BASE/secrets/batch" \
@@ -47,7 +47,7 @@ cat <<JSON | curl -sS -X PUT "$API_BASE/secrets/batch" \
   "secrets": [
     {"secretName": "AIRFLOW_CONN_POSTGRES_CURATED", "secretValue": "$postgres_uri"},
     {"secretName": "AIRFLOW_CONN_CLICKHOUSE_DEFAULT", "secretValue": "$clickhouse_uri"},
-    {"secretName": "AIRFLOW_CONN_MINIO_DEFAULT", "secretValue": "$minio_uri"},
+    {"secretName": "AIRFLOW_CONN_OBJECT_STORE_DEFAULT", "secretValue": "$object_store_uri"},
     {"secretName": "AIRFLOW_CONN_AIRBYTE_API", "secretValue": "$airbyte_uri"},
     {"secretName": "AIRFLOW_VAR_BRONZE_BUCKET", "secretValue": "$bronze_bucket"},
     {"secretName": "AIRFLOW_VAR_SILVER_BUCKET", "secretValue": "$silver_bucket"},

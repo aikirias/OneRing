@@ -5,7 +5,7 @@ hyperopt==0.2.7
 pyspark==3.5.1
 evidently==0.4.21
 fsspec==2024.2.0
-bentoml==1.4.27
 pandas==2.2.3
 numpy==2.0.2
 gcsfs==2024.2.0
+dbt-clickhouse==1.7.10

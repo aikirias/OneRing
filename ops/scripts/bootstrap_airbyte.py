@@ -12,13 +12,14 @@ API_URL = os.getenv("AIRBYTE_API_URL", "http://localhost:8001/api").rstrip("/")
 REQUEST_TIMEOUT = int(os.getenv("AIRBYTE_API_TIMEOUT", "180"))
 SOURCE_NAME = os.getenv("AIRBYTE_DEMO_SOURCE", "Demo Faker Orders")
 SOURCE_DEFINITION_NAME = os.getenv("AIRBYTE_DEMO_SOURCE_DEFINITION", "Sample Data (Faker)")
-DESTINATION_NAME = os.getenv("AIRBYTE_DEMO_DESTINATION", "Demo MinIO Bronze")
+DESTINATION_NAME = os.getenv("AIRBYTE_DEMO_DESTINATION", "Demo Ceph Bronze")
 DESTINATION_DEFINITION_NAME = os.getenv("AIRBYTE_DEMO_DESTINATION_DEFINITION", "S3")
 CONNECTION_NAME = os.getenv("AIRBYTE_DEMO_CONNECTION", "Faker Orders to Bronze")
-BRONZE_BUCKET = os.getenv("MINIO_BUCKET_BRONZE", "bronze")
-ACCESS_KEY = os.getenv("MINIO_ROOT_USER")
-SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD")
-MINIO_ENDPOINT = os.getenv("AIRBYTE_MINIO_ENDPOINT", "http://minio:9000")
+BRONZE_BUCKET = os.getenv("CEPH_BUCKET_BRONZE", "bronze")
+ACCESS_KEY = os.getenv("CEPH_ACCESS_KEY")
+SECRET_KEY = os.getenv("CEPH_SECRET_KEY")
+CEPH_ENDPOINT = os.getenv("CEPH_RGW_ENDPOINT", "http://ceph:9000")
+CEPH_REGION = os.getenv("CEPH_REGION", "us-east-1")
 
 session = requests.Session()
 
@@ -95,7 +96,7 @@ def ensure_source(workspace_id: str) -> str:
 
 def ensure_destination(workspace_id: str) -> str:
     if not ACCESS_KEY or not SECRET_KEY:
-        raise RuntimeError("MINIO_ROOT_USER and MINIO_ROOT_PASSWORD must be set in environment before seeding Airbyte.")
+        raise RuntimeError("CEPH_ACCESS_KEY and CEPH_SECRET_KEY must be set before seeding Airbyte.")
 
     existing = _find_existing("/v1/destinations/list", {"workspaceId": workspace_id}, "name", DESTINATION_NAME)
     if existing:
@@ -109,10 +110,10 @@ def ensure_destination(workspace_id: str) -> str:
         "workspaceId": workspace_id,
         "connectionConfiguration": {
             "s3_bucket_name": BRONZE_BUCKET,
-            "s3_bucket_region": "us-east-1",
+            "s3_bucket_region": CEPH_REGION,
             "s3_bucket_path": "raw/orders",
             "s3_path_format": "{namespace}/{stream}/{year}-{month}-{day}",
-            "s3_endpoint": MINIO_ENDPOINT,
+            "s3_endpoint": CEPH_ENDPOINT,
             "access_key_id": ACCESS_KEY,
             "secret_access_key": SECRET_KEY,
             "file_name_pattern": "{timestamp}",

@@ -1,12 +1,37 @@
 import os
-import requests
+from functools import lru_cache
+
+import mlflow
+import numpy as np
+import pandas as pd
 import streamlit as st
 
-BENTO_ENDPOINT = os.environ.get("BENTO_ENDPOINT", "http://localhost:3001/predict")
+TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000")
+MODEL_NAME = os.environ.get("MLFLOW_MODEL_NAME", "oner_churn_model")
+MODEL_STAGE = os.environ.get("STREAMLIT_MODEL_STAGE", os.environ.get("MLFLOW_MODEL_STAGE", "Staging"))
+
+
+@lru_cache(maxsize=1)
+def _load_model():
+    mlflow.set_tracking_uri(TRACKING_URI)
+    model_uri = f"models:/{MODEL_NAME}/{MODEL_STAGE}"
+    return mlflow.pyfunc.load_model(model_uri)
+
+
+def _score(payload):
+    model = _load_model()
+    frame = pd.DataFrame(payload)
+    predictions = model.predict(frame)
+    if isinstance(predictions, pd.DataFrame):
+        probs = predictions[predictions.columns[-1]].to_numpy(dtype=float)
+    else:
+        probs = np.array(predictions, dtype=float).flatten()
+    return probs.tolist()
+
 
 st.set_page_config(page_title="Customer Churn Scorer", page_icon="🤖")
 st.title("Customer Churn Mini-App")
-st.write("Interactively score customers using the latest model served by BentoML.")
+st.write("Interactively score customers using the latest model registered in MLflow.")
 
 with st.form("prediction_form"):
     total_transactions = st.slider("Total Transactions", min_value=0, max_value=150, value=20)
@@ -16,25 +41,17 @@ with st.form("prediction_form"):
     submitted = st.form_submit_button("Score Customer")
 
 if submitted:
-    payload = {
-        "instances": [
-            {
-                "total_transactions": total_transactions,
-                "total_spend": total_spend,
-                "avg_transaction_value": avg_transaction_value,
-                "spend_last_30d": spend_last_30d,
-            }
-        ]
+    record = {
+        "total_transactions": total_transactions,
+        "total_spend": total_spend,
+        "avg_transaction_value": avg_transaction_value,
+        "spend_last_30d": spend_last_30d,
     }
     try:
-        response = requests.post(BENTO_ENDPOINT, json=payload, timeout=10)
-        response.raise_for_status()
-        result = response.json()
-        probability = result["predictions"][0]
-        label = result["classes"][0]
+        scores = _score([record])
+        probability = scores[0]
+        label = int(probability >= 0.5)
         st.success(f"Predicted churn probability: {probability:.3f}")
         st.write("Predicted class:", "High risk" if label == 1 else "Low risk")
-    except requests.RequestException as exc:
-        st.error(f"Request failed: {exc}")
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Unexpected error: {exc}")
+        st.error(f"Prediction failed: {exc}")

@@ -7,28 +7,30 @@ import sys
 from pathlib import Path
 
 ENV = {
-    "MINIO_ROOT_USER": os.getenv("MINIO_ROOT_USER", "minioadmin"),
-    "MINIO_ROOT_PASSWORD": os.getenv("MINIO_ROOT_PASSWORD", "minioadmin"),
+    "CEPH_ACCESS_KEY": os.getenv("CEPH_ACCESS_KEY", "cephadmin"),
+    "CEPH_SECRET_KEY": os.getenv("CEPH_SECRET_KEY", "cephpass"),
+    "CEPH_REGION": os.getenv("CEPH_REGION", "us-east-1"),
+    "CEPH_RGW_ENDPOINT": os.getenv("CEPH_RGW_ENDPOINT", "http://ceph:9000"),
     "CURATED_PG_USER": os.getenv("CURATED_PG_USER", "curated_user"),
     "CURATED_PG_PASSWORD": os.getenv("CURATED_PG_PASSWORD", "curatedpass"),
     "CLICKHOUSE_USER": os.getenv("CLICKHOUSE_USER", "default"),
     "CLICKHOUSE_PASSWORD": os.getenv("CLICKHOUSE_PASSWORD", "clickpass"),
-    "MINIO_BUCKET_BRONZE": os.getenv("MINIO_BUCKET_BRONZE", "bronze"),
-    "MINIO_BUCKET_SILVER": os.getenv("MINIO_BUCKET_SILVER", "silver"),
+    "CEPH_BUCKET_BRONZE": os.getenv("CEPH_BUCKET_BRONZE", "bronze"),
+    "CEPH_BUCKET_SILVER": os.getenv("CEPH_BUCKET_SILVER", "silver"),
 }
 
 CONNECTIONS = [
     {
-        "conn_id": "minio_default",
+        "conn_id": "object_store_default",
         "conn_type": "aws",
-        "login": ENV["MINIO_ROOT_USER"],
-        "password": ENV["MINIO_ROOT_PASSWORD"],
+        "login": ENV["CEPH_ACCESS_KEY"],
+        "password": ENV["CEPH_SECRET_KEY"],
         "extra": json.dumps(
             {
-                "endpoint_url": "http://minio:9000",
-                "region_name": "us-east-1",
-                "aws_access_key_id": ENV["MINIO_ROOT_USER"],
-                "aws_secret_access_key": ENV["MINIO_ROOT_PASSWORD"],
+                "endpoint_url": ENV["CEPH_RGW_ENDPOINT"],
+                "region_name": ENV["CEPH_REGION"],
+                "aws_access_key_id": ENV["CEPH_ACCESS_KEY"],
+                "aws_secret_access_key": ENV["CEPH_SECRET_KEY"],
             }
         ),
     },
@@ -62,8 +64,8 @@ CONNECTIONS = [
 ]
 
 VARIABLES = {
-    "bronze_bucket": ENV["MINIO_BUCKET_BRONZE"],
-    "silver_bucket": ENV["MINIO_BUCKET_SILVER"],
+    "bronze_bucket": ENV["CEPH_BUCKET_BRONZE"],
+    "silver_bucket": ENV["CEPH_BUCKET_SILVER"],
     "gold_schema": "gold",
 }
 

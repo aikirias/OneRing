@@ -1,0 +1,27 @@
+<yandex>
+  <ldap_servers>
+    <openldap>
+      <host>openldap</host>
+      <port>389</port>
+      <bind_dn>cn=clickhouse-reader,ou=service,dc=oner,dc=local</bind_dn>
+      <bind_password>clickhousebind</bind_password>
+      <search_base_dn>ou=people,dc=oner,dc=local</search_base_dn>
+      <search_filter>(&amp;(objectClass=inetOrgPerson)(uid={user}))</search_filter>
+      <scope>subtree</scope>
+      <ldap_version>3</ldap_version>
+      <timeout>3</timeout>
+      <reconnect_timeout>2</reconnect_timeout>
+      <throttle_limit>10</throttle_limit>
+      <allow_blank_passwords>false</allow_blank_passwords>
+    </openldap>
+  </ldap_servers>
+  <user_directories>
+    <ldap>
+      <server>openldap</server>
+      <roles>
+        <role>analyst</role>
+        <role>platform-admin</role>
+      </roles>
+    </ldap>
+  </user_directories>
+</yandex>

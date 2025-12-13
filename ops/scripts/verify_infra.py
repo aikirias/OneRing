@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Simple connectivity checks for core services."""
+import os
 import sys
 from typing import Dict
 
@@ -8,9 +9,9 @@ import requests
 TARGETS: Dict[str, str] = {
     "Airflow": "http://localhost:8080/health",
     "Airbyte": "http://localhost:8001/api/v1/health",
-    "MinIO": "http://localhost:9000/minio/health/live",
     "OpenMetadata": "http://localhost:8585/api/v1/system/config",
     "Grafana": "http://localhost:3000/api/health",
+    "Keycloak": f"http://localhost:{os.getenv('KEYCLOAK_HTTP_PORT', '8089')}/realms/oner/.well-known/openid-configuration",
 }
 
 

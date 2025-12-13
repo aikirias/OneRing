@@ -2,6 +2,11 @@
 
 Local, Docker-first medallion data platform that showcases orchestration, ingestion, cataloging, quality, versioning, secrets, and observability in a single plug-and-play stack.
 
+## Documentation Map
+- `docs/architecture.md` – deep dive into components and flow.
+- `docs/concepts.md` – glossary for less-common tools (Ceph RGW, Iceberg REST catalog, Feast, Infisical, etc.).
+- `docs/workplan.md` – phased checklist tracking delivery status.
+
 ## Stack
 
 | Capability | Tooling |
@@ -11,18 +16,19 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
 | Messaging & Queues | Apache Pulsar (standalone broker + admin) |
 | Table Format & Catalog | Apache Iceberg REST catalog (S3-backed) |
 | SQL Query Engine | Trino (Iceberg + Postgres connectors) |
-| Object Storage | MinIO (S3 compatible) |
-| Warehouses | ClickHouse (Silver analytics), Postgres (Gold curated & Airflow metastore) |
+| Object Storage | Ceph RGW (rook-ceph S3 gateway) |
+| Warehouses | ClickHouse (analyst-facing Silver/marts), Postgres (transactional/CDC + Airflow metastore) |
 | Data Quality | Great Expectations |
 | Metadata & Lineage | OpenMetadata (server + ingestion) |
 | Schema Versioning | Liquibase (Postgres + ClickHouse changelogs) |
 | Feature Store | Feast (file offline store + Redis online store) |
-| Experiment Tracking & Registry | MLflow (Postgres backend + MinIO artifact store) |
-| Model Serving | BentoML service & container |
+| Experiment Tracking & Registry | MLflow (Postgres backend + Ceph artifact store) |
+| Model Serving | Streamlit scoring app backed by MLflow |
 | ML Monitoring | Evidently (daily drift reports) |
 | Business Intelligence | Metabase (with ClickHouse driver) |
 | Demo UI | Streamlit mini-app |
 | Identity & Access | Keycloak (IAM & RBAC provider) |
+| Directory Services | OpenLDAP (shared LDAP for databases + Keycloak federation) |
 | Secrets Handling | Infisical (optional vault) + environment variables |
 | Observability | Prometheus + Grafana |
 
@@ -49,7 +55,7 @@ Local, Docker-first medallion data platform that showcases orchestration, ingest
    # include extra modules, e.g.:
    # make bootstrap PROFILES="core ingestion"
    ```
-   > `bootstrap` orchestrates database/bootstrap migrations, MinIO bucket creation, Airbyte/OpenMetadata registration, and Airflow connection setup. Airbyte can take a couple of minutes to expose its API during the first run.
+   > `bootstrap` orchestrates database/bootstrap migrations, Ceph bucket creation, Airbyte/OpenMetadata registration, and Airflow connection setup. Airbyte can take a couple of minutes to expose its API during the first run.
 4. Bring the desired profiles online (defaults to `core`):
    ```bash
    make up
@@ -68,12 +74,12 @@ The Compose file is partitioned into profiles so you can start only what you nee
 
 | Profile | Key services | Purpose |
 | --- | --- | --- |
-| `core` | Airflow scheduler/webserver/worker/triggerer/flower, Postgres (metastore & gold), Redis, ClickHouse, MinIO, Infisical | Baseline medallion pipelines, secrets, storage |
-| `ingestion` | Airbyte server/worker/webapp + Temporal, ClickHouse ingest helpers, Spark master/worker, Flink job/task managers | Self-service ingestion, batch/stream processing into Bronze |
+| `core` | Airflow scheduler/webserver/worker/triggerer/flower, Postgres (metastore & gold), Redis, ClickHouse, Ceph RGW, Infisical | Baseline medallion pipelines, secrets, storage |
+| `ingestion` | Airbyte server/worker/webapp + Temporal, ClickHouse ingest helpers, Spark master/worker, Flink job/task managers | Self-service ingestion (Airbyte), core-engineered vendor feeds (Spark), and the primary streaming surface (Flink) |
 | `streaming` | Apache Pulsar standalone broker & admin API | Event bus, pub/sub, streaming ingestion |
 | `catalog` | OpenMetadata server, Postgres, Elasticsearch, ingestion container | Metadata, lineage, glossary demos |
 | `analytics` | ClickHouse service + Metabase UI (ClickHouse driver auto-installed) | Ad-hoc SQL exploration and dashboards |
-| `ml` | MLflow + Postgres backend, BentoML service, Streamlit mini-app, reused MinIO | Feature + model lifecycle, serving & monitoring |
+| `ml` | MLflow + Postgres backend, Streamlit mini-app, reused Ceph RGW | Feature + model lifecycle, serving & monitoring |
 | `observability` | Prometheus, Grafana | Metrics dashboards and alerts |
 | `cicd` | Jenkins LTS with Configuration-as-Code mounts | CI/CD pipelines, automation demos |
 
@@ -83,23 +89,24 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 
 > Profiles to run: `core` + `ingestion` (add `catalog` to capture lineage).
 
-1. Ensure Airbyte connection exists (created during bootstrap) and MinIO holds the seed CSV (`ops/scripts/seed_minio.py`).
+1. Ensure Airbyte connection exists (created during bootstrap) and Ceph holds the seed CSV plus the Feast feature sample (`ops/scripts/seed_ceph.py` uploads both into `${CEPH_BUCKET_BRONZE}`/`${CEPH_BUCKET_FEATURESTORE}`).
 2. Trigger the Airflow DAG `medallion_batch_demo` from the UI (`http://localhost:8080`) or via CLI:
    ```bash
    docker compose exec airflow-webserver airflow dags trigger medallion_batch_demo
    ```
 3. DAG steps:
-   - Triggers Airbyte sync via API → Bronze data lands in MinIO (`bronze/airbyte/...`).
+   - Triggers Airbyte sync via API → Bronze data lands in Ceph (`bronze/airbyte/...`).
    - Great Expectations validates Bronze dataset.
    - Transforms & filters orders into a Silver dataset, validates again.
    - Loads Silver data into ClickHouse (`analytics.orders_clean`).
    - Publishes curated snapshot to Postgres (`gold.orders_snapshot`).
    - Logs lineage hook (expand for OpenMetadata integration).
 4. Inspect outputs:
-   - MinIO console: `http://localhost:9001`
+   - Ceph RGW S3 endpoint: `http://localhost:9000`
    - ClickHouse client: `docker compose exec clickhouse clickhouse-client -q "SELECT * FROM analytics.orders_clean"`
    - Postgres gold: `docker compose exec postgres psql -d curated -c "SELECT * FROM gold.orders_snapshot"`
    - Great Expectations validation results under `platform/quality/great_expectations/validations`.
+   > The Postgres snapshot exists to drive CDC/Flink transactional flows; analysts should read the cleaned data via ClickHouse/dbt models.
 
 ## ML Feature & Model Lifecycle
 
@@ -109,21 +116,25 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
    - Applies, materialises, and exports features from the Feast repo (`platform/featurestore/feast_repo`).
    - Generates a training dataset and stores it under `storage/data/ml/outputs/`.
    - Trains a Spark ML logistic-regression model with Hyperopt, logs runs/metrics to MLflow, and registers the best model.
-   - Builds a Bento bundle from the registered model and signals the BentoML service to reload.
-2. **Inspect experiments** at `http://localhost:5000` (MLflow UI). Credentials inherit from `.env` (no auth by default).
-3. **Invoke the serving endpoint** exposed by BentoML at `http://localhost:3001/predict`:
-   ```bash
-   curl -X POST http://localhost:3001/predict \
-     -H 'Content-Type: application/json' \
-     -d '{"instances": [{"total_transactions": 25, "total_spend": 760.0, "avg_transaction_value": 30.4, "spend_last_30d": 180.0}]}'
-   ```
-4. **Optional mini-app**: open the Streamlit UI at `http://localhost:8501` to score customers interactively.
-5. **Daily monitoring**: the `evidently_drift_report` DAG runs a drift report with Evidently, storing HTML outputs in `storage/data/ml/reports/`. Review the latest report after the DAG finishes.
+2. **Inspect experiments** at `http://localhost:5000` (MLflow UI). Credentials inherit from `.env` (no auth by default), and the latest staging model stays registered as `oner_churn_model`.
+3. **Score interactively** via the Streamlit UI at `http://localhost:8501`. The app loads the latest staging model from MLflow and infers locally, so there is no separate serving endpoint to manage.
+4. **Daily monitoring**: the `evidently_drift_report` DAG runs a drift report with Evidently, storing HTML outputs in `storage/data/ml/reports/`. Review the latest report after the DAG finishes.
+> Feast expects its historical source in Ceph at `s3://${CEPH_BUCKET_FEATURESTORE:-featurestore}/featurestore/customer_transactions.csv`; re-run `ops/scripts/seed_ceph.py` if you need to refresh the demo dataset inside Ceph.
+
+### How Feast Fits In
+
+- **Offline store**: Bronze/Silver medallion snapshots live in Ceph (Iceberg tables). Feast’s `FileSource` objects point to those S3-compatible paths, so `feast apply` + `feast materialize` load feature data straight from the buckets you manage via Airbyte/Spark.
+- **Online store**: Redis (shipped with the `core` profile) holds the low-latency copies of each feature view. The Airflow DAG handles `feast materialize-incremental` to fan the latest aggregates into Redis before inference time.
+- **Registry & repo**: `platform/featurestore/feast_repo` bundles entities, feature views, and services. Bootstrap seeds demo data into Ceph so the repo has something to hydrate immediately.
+- **Training & serving**: `platform/ml/training/train_pipeline.py` fetches a historical feature dataset from Feast, trains with Spark/Hyperopt, logs into MLflow, and the Streamlit app queries Feast’s online store for fresh features when users test the model.
 
 ## Spark & Flink Services
 
 > Profile to run: `ingestion` (services start alongside Airbyte).
 
+- Airbyte continues to own self-service sources; the Spark cluster documented here is meant for core data engineering pipelines that ingest contractual/vendor deliveries before handing them off to Silver/Gold layers.
+- Spark moves medallion data between Ceph/Iceberg tables; those curated zones power Feast/ML pipelines while dbt + ClickHouse handle analyst-serving marts.
+- Flink is the default surface for real-time work—use it to read CDC/event topics from Pulsar and write enriched records back to Pulsar or directly into Ceph Bronze when you need persisted landings.
 - Spark master UI: `http://localhost:8081` (override via `SPARK_MASTER_WEB_PORT`).
 - Spark worker UI: `http://localhost:8084` (override via `SPARK_WORKER_WEB_PORT`).
 - Flink dashboard & REST API: `http://localhost:8090` (override via `FLINK_REST_PORT`).
@@ -140,7 +151,9 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
   # append ingestion if you also want Flink
   ```
 - Broker binary protocol: `pulsar://localhost:${PULSAR_BINARY_PORT}` (default `6650`); REST/admin UI: `http://localhost:${PULSAR_HTTP_PORT}` (default `8087`). Flink REST dashboard: `http://localhost:${FLINK_REST_PORT}` (default `8090`).
-- Debezium pulls CDC events from the curated Postgres database using `ops/scripts/bootstrap.sh`-provisioned credentials and streams them into `${DEBEZIUM_PULSAR_TOPIC}` (default `persistent://public/default/oner.orders`). Adjust the include lists in `.env` if you need different schemas/tables.
+- Debezium pulls CDC events from the curated Postgres database using `ops/scripts/bootstrap.sh`-provisioned credentials and streams them into `${DEBEZIUM_PULSAR_TOPIC}` (default `persistent://public/default/oner.orders`). In production-style deployments treat Debezium as the CDC boundary for external/vendor sources that must be mirrored into Pulsar before further processing.
+- Reserve Postgres for these transactional + streaming patterns (microservices, CDC, Flink sinks). Analytical SQL should target ClickHouse directly or the Iceberg tables managed by Spark.
+- Flink jobs consume those CDC topics (or any other Pulsar streams) and are the preferred place to implement streaming enrichment. Push outputs to downstream Pulsar topics when you need more fan-out, or land them in Ceph's Bronze bucket when the stream feeds batch consumers.
 - Register topics and verify Pulsar connectivity:
   ```bash
   docker compose exec pulsar bin/pulsar-admin topics create persistent://public/default/demo-topic
@@ -156,7 +169,7 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
   docker compose exec flink-jobmanager flink list
   ```
   Mount your compiled jars under `platform/streaming/flink/jobs/` (bind in `docker-compose.yml`) or use a volume override when launching Compose.
-- Iceberg REST catalog: `http://localhost:${ICEBERG_REST_PORT}`. Confirm availability with `curl http://localhost:${ICEBERG_REST_PORT}/v1/config`. The catalog stores tables in the `${MINIO_BUCKET_ICEBERG}` bucket on MinIO.
+- Iceberg REST catalog: `http://localhost:${ICEBERG_REST_PORT}`. Confirm availability with `curl http://localhost:${ICEBERG_REST_PORT}/v1/config`. The catalog stores tables in the `${CEPH_BUCKET_ICEBERG}` bucket on Ceph RGW.
 - Integrate Flink or Spark connectors by targeting the Pulsar broker URL above; use the REST dashboard to monitor job status and metrics. CDC consumers can subscribe to `${DEBEZIUM_TOPIC_PREFIX}`-prefixed topics or the explicit sink topic configured above.
 - Example Spark session (inside the `spark-master` container) that leverages the Iceberg REST catalog:
   ```bash
@@ -165,16 +178,16 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
     --conf spark.sql.catalog.rest=org.apache.iceberg.spark.SparkCatalog \
     --conf spark.sql.catalog.rest.type=rest \
     --conf spark.sql.catalog.rest.uri=http://iceberg-rest:8181 \
-    --conf spark.sql.catalog.rest.warehouse=s3a://${MINIO_BUCKET_ICEBERG}/warehouse \
+    --conf spark.sql.catalog.rest.warehouse=s3a://${CEPH_BUCKET_ICEBERG}/warehouse \
     --conf spark.sql.catalog.rest.io-impl=org.apache.iceberg.aws.s3.S3FileIO \
-    --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 \
-    --conf spark.hadoop.fs.s3a.access.key=${MINIO_ROOT_USER} \
-    --conf spark.hadoop.fs.s3a.secret.key=${MINIO_ROOT_PASSWORD} \
+    --conf spark.hadoop.fs.s3a.endpoint=http://ceph:9000 \
+    --conf spark.hadoop.fs.s3a.access.key=${CEPH_ACCESS_KEY} \
+    --conf spark.hadoop.fs.s3a.secret.key=${CEPH_SECRET_KEY} \
     --conf spark.hadoop.fs.s3a.path.style.access=true
   ```
-  Replace credentials if you use a different MinIO user for Iceberg access.
+  Replace credentials if you use a different Ceph user for Iceberg access.
 
-## Analytics Exploration (Metabase)
+## Analytics Exploration (Metabase – ClickHouse Only)
 
 > Profile to run: `analytics` (includes ClickHouse). Run `make bootstrap PROFILES="analytics"` once to fetch the ClickHouse driver automatically, or execute `./ops/scripts/metabase_clickhouse_driver.sh` manually.
 
@@ -182,25 +195,24 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
    ```bash
    make up-analytics
    ```
-2. Visit `http://localhost:3030` and complete the initial Metabase setup.
-3. Add a ClickHouse database using:
+2. Visit `http://localhost:3030` (exposed behind oauth2-proxy/Keycloak) and complete the initial Metabase setup as an analyst user.
+3. Add a single ClickHouse database using:
    - Host: `clickhouse`
    - Port: `8123`
    - Database: `analytics`
    - Username / Password: values from `.env` (`CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD`)
+   Metabase is intentionally scoped to ClickHouse so analysts only see curated marts and staging tables; Iceberg/Postgres remain accessible via engineering tooling (Trino/Spark) instead.
 
-### dbt Models (Postgres Gold)
+### dbt Models (ClickHouse Analytics)
 
-- Project root: `platform/analytics/dbt`. Install deps within the container:
+- Project root: `platform/analytics/dbt`. The Airflow image installs `dbt-clickhouse`, so you can operate entirely inside the container:
   ```bash
   docker compose exec airflow-webserver bash -lc 'cd /opt/airflow/platform/analytics/dbt && dbt deps'
-  ```
-- Use the included `profiles.yml` (leverages existing `CURATED_PG_*` env vars) and run models against the curated warehouse:
-  ```bash
   docker compose exec airflow-webserver bash -lc 'cd /opt/airflow/platform/analytics/dbt && dbt run'
   docker compose exec airflow-webserver bash -lc 'cd /opt/airflow/platform/analytics/dbt && dbt test'
   ```
-- Outputs materialise in Postgres schemas `staging` and `marts`; bootstrap seeds now live under `platform/storage/postgres/seeds`.
+- The bundled `profiles.yml` points to ClickHouse using the existing `CLICKHOUSE_*` env vars; no Postgres connection is required for analytics anymore.
+- Models materialise inside ClickHouse schemas `staging` and `marts` so analysts can explore marts directly in Metabase/Trino. Postgres remains dedicated to transactional services, Debezium CDC, and Flink jobs.
 4. Explore Silver/Gold tables (e.g., `analytics.orders_clean`) or build dashboards on top of the medallion flows.
 
 > If the ClickHouse driver fails to download, rerun `./ops/scripts/metabase_clickhouse_driver.sh` with network access, then restart (`make down PROFILES="analytics" && make up-analytics`).
@@ -218,7 +230,7 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
   docker compose exec trino trino --execute "SHOW CATALOGS"
   docker compose exec trino trino --catalog iceberg --schema default --execute "SHOW TABLES"
   ```
-- The `iceberg` catalog targets the REST catalog backed by MinIO; the `postgres` catalog queries the curated Postgres database. Configure additional catalogs by dropping files under `platform/analytics/trino/etc/catalog/`.
+- The `iceberg` catalog targets the REST catalog backed by Ceph RGW (Bronze/Silver/Gold), the `postgres` catalog queries the transactional database, and the `clickhouse` catalog exposes analyst marts. Trino is the sanctioned gateway for engineers who need to span the entire storage stack; Metabase stays constrained to ClickHouse.
 
 ## Identity & RBAC (Keycloak)
 
@@ -229,9 +241,17 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
   make up PROFILES="core security"
   ```
 - Console: `http://localhost:${KEYCLOAK_HTTP_PORT}`. Log in with `${KEYCLOAK_ADMIN}/${KEYCLOAK_ADMIN_PASSWORD}`.
-- Imported realm includes Realm roles (`platform-admin`, `data-analyst`, `data-engineer`), mapped groups, and demo OIDC clients for Trino and Metabase. A seeded realm user (`platform-admin`/`admin`) is provided for initial testing—rotate these credentials immediately in non-demo setups.
+- Imported realm includes Realm roles (`platform-admin`, `data-analyst`, `data-engineer`, `platform-superuser`), mapped groups, and demo OIDC clients for Trino, Metabase, and the oauth2-proxy frontends (Airflow/Airbyte/MLflow). A seeded realm user (`platform-admin`/`admin`) is provided for initial testing—rotate these credentials immediately in non-demo setups.
+- **Gatekeeper pattern**: End-user UIs (Airflow, Airbyte, MLflow, Metabase) never expose their native auth. Each sits behind an `oauth2-proxy` container that offloads login to Keycloak via OpenID Connect. Successful users receive a secure cookie from oauth2-proxy; backends only see the already-authenticated reverse proxy.
+- **Service integration**: CLI/batch systems (Trino, Airflow connections) can also leverage Keycloak-issued tokens or client credentials. Update the `*_OIDC_CLIENT_SECRET` and `*_OIDC_COOKIE_SECRET` values in `.env` if you rotate Keycloak client secrets so the proxies keep validating sessions correctly.
 - Extend RBAC by editing the realm JSON in `platform/security/keycloak/realms/oner-realm.json` and restarting Keycloak with `make down PROFILES="security" && make up PROFILES="security"`.
 - Applications can integrate with Keycloak via OpenID Connect; use the realm discovery endpoint `http://localhost:${KEYCLOAK_HTTP_PORT}/realms/oner/.well-known/openid-configuration` for client configuration.
+
+### LDAP-backed services
+
+- An OpenLDAP container (`openldap`) now bootstraps shared users (`uid=platform-admin`, `uid=data-analyst`, etc.) under `ou=people,dc=oner,dc=local`. Keycloak federates the same directory so you can manage roles centrally while databases reuse the LDAP credentials.
+- Postgres is configured with an LDAP `pg_hba.conf` entry, so connecting clients can authenticate with their LDAP username/password (e.g., `psql -h localhost -U data-analyst`).
+- ClickHouse loads the same directory via `config.d/ldap.xml` using the `cn=clickhouse-reader,ou=service,...` bind user (defaults in `.env`). Grant users to ClickHouse roles in LDAP or Keycloak groups depending on your preference.
 
 ## CI/CD Automation (Jenkins)
 
@@ -250,7 +270,7 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 
 > Profiles to run: `core` + `observability` (+ `catalog` for OpenMetadata).
 
-- Grafana: `http://localhost:3000` (credentials from `.env`). Dashboard shows Airflow DAG metrics, MinIO requests, ClickHouse inserts.
+- Grafana: `http://localhost:3000` (credentials from `.env`). Dashboard shows Airflow DAG metrics and ClickHouse inserts.
 - Prometheus: `http://localhost:9090`.
 - OpenMetadata: `http://localhost:8585` (default admin `admin@open-metadata.org` / `admin`). Use the ingestion configs in `platform/catalog/openmetadata/ingestion/*.yaml` to refresh metadata via `ops/scripts/openmetadata_seed.py`.
 - MLflow Tracking: `http://localhost:5000` – compare runs, metrics, and registered models coming from the Spark/Hyperopt pipeline.
@@ -258,12 +278,13 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 
 ## Secrets & Config Management
 
-- Secrets are sourced from `.env` by default; the stack also includes Infisical (`http://localhost:8082`) so you can wire in a vault if desired. Populate `INFISICAL_*` variables (use base64-encoded 32-byte values for `INFISICAL_ENCRYPTION_KEY` and `INFISICAL_AUTH_SECRET`) and rerun `make bootstrap` to seed secrets automatically via `ops/scripts/infisical_seed.sh`.
-- MinIO staging policies: `ops/scripts/bootstrap.sh` now creates a dedicated bucket `${MINIO_BUCKET_STAGE}` along with a scoped user (`${MINIO_STAGE_USER}`) and policy that limits access to that bucket. Override the defaults in `.env`, rerun `make bootstrap --skip-pull=true`, and distribute only the stage credentials to pipelines that require staging access.
+- Secrets are sourced from `.env` by default; the stack also includes Infisical (`http://localhost:8082`) so you can wire in a vault if desired. Populate `INFISICAL_*` variables (use base64-encoded 32-byte values for `INFISICAL_ENCRYPTION_KEY` and `INFISICAL_AUTH_SECRET`) and rerun `make bootstrap` to seed secrets automatically via `ops/scripts/infisical_seed.sh`. Airflow is preconfigured to use the Infisical secrets backend, and every service that handles credentials (Airbyte, MLflow, Streamlit, oauth2-proxies, etc.) can read/update secrets through Infisical by exporting the same environment variables.
+- Feature store assets: the Feast repo reads from `${CEPH_BUCKET_FEATURESTORE}`. `ops/scripts/seed_ceph.py` uploads the default `featurestore/customer_transactions.csv` object whenever you need to reseed Ceph.
+- Ceph staging policies: `ops/scripts/bootstrap.sh` now creates a dedicated bucket `${CEPH_BUCKET_STAGE}` along with a scoped user (`${CEPH_STAGE_USER}`) and policy that limits access to that bucket. Override the defaults in `.env`, rerun `make bootstrap --skip-pull=true`, and distribute only the stage credentials to pipelines that require staging access.
 
 ## Schema Versioning
 
-- Liquibase changelogs for Postgres (`platform/versioning/liquibase/changelogs/postgres`) and ClickHouse (`platform/versioning/liquibase/changelogs/clickhouse`).
+- Liquibase manages only the Postgres (transactional/CDC) and ClickHouse (analytics) schemas via `platform/versioning/liquibase/changelogs/{postgres,clickhouse}`; no other stores are versioned.
 - Run updates manually as needed:
   ```bash
   docker compose --profile tools run --rm liquibase --defaultsFile=platform/versioning/liquibase/liquibase-postgres.properties update
@@ -289,7 +310,7 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 │   ├── infisical_seed.sh
 │   ├── openmetadata_seed.py
 │   ├── airflow_setup.py
-│   └── seed_minio.py
+│   └── seed_ceph.py
   ├── platform/
   │   ├── orchestration/airflow/{dags,config,include,tests}
   │   ├── ingestion/airbyte/config
@@ -300,9 +321,9 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
   │   ├── analytics/{clickhouse,postgres}
   │   ├── cicd/jenkins/{casc,jobs}
   │   ├── storage/medallion/{bronze,silver,gold}
-│   ├── ml/{training,bento_service}
+│   ├── ml/{training,mlflow}
 │   ├── versioning/liquibase
-│   ├── security/infisical
+│   ├── security/{infisical,keycloak,ldap}
 │   └── observability/{grafana,prometheus}
 ├── storage/data/ml
 └── docker-compose.yml
@@ -313,10 +334,10 @@ Special profiles: `bootstrap` (Airflow DB init job) and `tools` (Liquibase) are 
 ```mermaid
 flowchart LR
     subgraph Bronze
-        Airbyte((Airbyte Source)) -->|JSONL| MinIO[(MinIO Bronze)]
+        Airbyte((Airbyte Source)) -->|JSONL| Ceph[(Ceph Bronze)]
     end
     subgraph Silver
-        MinIO -->|Airflow Transform| ClickHouse[(ClickHouse Silver)]
+        Ceph -->|Airflow Transform| ClickHouse[(ClickHouse Silver)]
         ClickHouse -->|Great Expectations| GE[Great Expectations]
     end
     subgraph Gold
@@ -325,7 +346,7 @@ flowchart LR
     Airflow --> OpenMetadata
     Airbyte --> OpenMetadata
     GE --> OpenMetadata
-    MinIO --> Grafana
+    Ceph --> Grafana
     ClickHouse --> Grafana
     Postgres --> Grafana
 ```
@@ -335,11 +356,11 @@ flowchart LR
 - `docker compose logs <service>` for detailed service logs.
 - Ensure Airbyte containers are healthy (`docker compose ps`) if bootstrap waits on the API.
 - If Liquibase ClickHouse update fails, download the ClickHouse Liquibase extension jar and mount it under `liquibase/drivers/`.
-- Re-run `ops/scripts/seed_minio.py` to refresh Bronze sample data.
+- Re-run `ops/scripts/seed_ceph.py` to refresh the Bronze sample data and the Feast feature CSV stored in Ceph.
 
 ## Next Ideas
 
 - Add streaming ingestion (e.g., Kafka + Debezium) alongside Airbyte.
-- Integrate dbt for SQL-based transformations in Silver/Gold layers.
+- Integrate additional dbt models for ClickHouse-based marts and subject areas.
 - Configure OpenLineage/OpenMetadata integration for automatic DAG lineage capture.
 - Expand Grafana dashboards with Great Expectations validation results.

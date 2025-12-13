@@ -2,11 +2,14 @@ oner_dbt:
   target: dev
   outputs:
     dev:
-      type: postgres
-      host: "{{ env_var('CURATED_PG_HOST', 'postgres') }}"
-      port: "{{ env_var('CURATED_PG_PORT', '5432') | as_number }}"
-      user: "{{ env_var('CURATED_PG_USER', 'curated_user') }}"
-      password: "{{ env_var('CURATED_PG_PASSWORD', 'curatedpass') }}"
-      dbname: "{{ env_var('CURATED_PG_DB', 'curated') }}"
+      type: clickhouse
+      host: "{{ env_var('CLICKHOUSE_HOST', 'clickhouse') }}"
+      port: "{{ env_var('CLICKHOUSE_PORT', '8123') | as_number }}"
+      user: "{{ env_var('CLICKHOUSE_USER', 'default') }}"
+      password: "{{ env_var('CLICKHOUSE_PASSWORD', 'clickpass') }}"
       schema: analytics
+      database: analytics
+      secure: false
+      verify: false
       threads: 4
+      timeout: 300

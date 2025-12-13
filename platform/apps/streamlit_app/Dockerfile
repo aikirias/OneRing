@@ -2,7 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir streamlit>=1.31 requests>=2.31 pandas>=2.1
+RUN pip install --no-cache-dir \
+    streamlit>=1.32 \
+    pandas>=2.2 \
+    numpy>=1.26 \
+    mlflow[s3]>=2.9 \
+    boto3>=1.34
 
 COPY app.py ./app.py
 

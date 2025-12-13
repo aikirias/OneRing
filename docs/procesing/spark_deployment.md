@@ -23,5 +23,5 @@
 
 ## Integrations
 - Airflow tasks under `platform/orchestration/airflow/dags/` can trigger Spark jobs using `SparkSubmitOperator`; update connection `spark_default` if you adjust ports.
-- To read from MinIO, configure the `s3a://` endpoint with credentials from `.env` and ensure the Hadoop AWS jar is available on the classpath.
+- To read from Ceph RGW, configure the `s3a://` endpoint with credentials from `.env` and ensure the Hadoop AWS jar is available on the classpath.
 - For streaming sources (Pulsar, Kafka), add the relevant connector jars to the job submission path and expose broker hostnames through Docker networking.

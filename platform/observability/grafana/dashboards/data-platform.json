@@ -17,16 +17,6 @@
       "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
     },
     {
-      "type": "stat",
-      "title": "MinIO Requests",
-      "targets": [
-        {
-          "expr": "sum(rate(minio_s3_requests_total[5m]))"
-        }
-      ],
-      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}
-    },
-    {
       "type": "timeseries",
       "title": "ClickHouse Inserts",
       "targets": [

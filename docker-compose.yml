@@ -23,13 +23,13 @@ x-airflow-common: &airflow-common
     INFISICAL_ENVIRONMENT: ${INFISICAL_ENVIRONMENT}
     MLFLOW_TRACKING_URI: ${MLFLOW_INTERNAL_TRACKING_URI}
     MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
-    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    OBJECT_STORE_ENDPOINT: ${CEPH_RGW_ENDPOINT}
+    AWS_ACCESS_KEY_ID: ${CEPH_ACCESS_KEY}
+    AWS_SECRET_ACCESS_KEY: ${CEPH_SECRET_KEY}
     MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME}
     FEAST_REPO_PATH: /opt/airflow/feast_repo
     FEAST_PROJECT_NAME: ${FEAST_PROJECT_NAME}
     FEAST_REFERENCE_DATA_PATH: /opt/airflow/storage/data/ml
-    BENTOML_HOME: /home/airflow/bentoml
     AIRFLOW_UID: ${AIRFLOW_UID}
     AIRFLOW_GID: ${AIRFLOW_GID}
     TZ: ${TZ}
@@ -46,7 +46,6 @@ x-airflow-common: &airflow-common
     - ./platform/ml:/opt/airflow/platform/ml
     - ./platform/analytics/dbt:/opt/airflow/platform/analytics/dbt
     - ./storage/data:/opt/airflow/storage/data
-    - bentoml_store:/home/airflow/bentoml
   user: "${AIRFLOW_UID}:${AIRFLOW_GID}"
   depends_on:
     postgres:
@@ -92,14 +91,40 @@ services:
     command: webserver
     profiles:
       - core
-    ports:
-      - "8080:8080"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health"]
       interval: 30s
       timeout: 30s
       retries: 5
       start_period: 60s
+
+  airflow-auth-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    profiles:
+      - core
+    env_file:
+      - .env
+    command:
+      - --provider=keycloak-oidc
+      - --redirect-url=http://localhost:8080/oauth2/callback
+      - --oidc-issuer-url=http://keycloak:${KEYCLOAK_HTTP_PORT}/realms/oner
+      - --client-id=${AIRFLOW_OIDC_CLIENT_ID}
+      - --client-secret=${AIRFLOW_OIDC_CLIENT_SECRET}
+      - --cookie-secret=${AIRFLOW_OIDC_COOKIE_SECRET}
+      - --email-domain=*
+      - --upstream=http://airflow-webserver:8080
+      - --pass-authorization-header=true
+      - --set-authorization-header=true
+      - --set-xauthrequest=true
+      - --http-address=0.0.0.0:8080
+      - --cookie-secure=false
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-webserver:
+        condition: service_started
+      keycloak:
+        condition: service_started
 
   airflow-triggerer:
     <<: *airflow-common
@@ -182,22 +207,30 @@ services:
       - "9009:9009"
       - "9363:9363"
 
-  minio:
-    image: minio/minio:latest
+  ceph:
+    image: quay.io/ceph/daemon:quincy
     profiles:
       - core
       - ingestion
       - ml
+      - streaming
+      - analytics
     env_file:
       - .env
-    command: server /data --console-address ":${MINIO_CONSOLE_PORT}"
+    command: demo
+    environment:
+      MON_IP: 0.0.0.0
+      CEPH_PUBLIC_NETWORK: 0.0.0.0/0
+      RGW_FRONTEND_PORT: ${CEPH_RGW_PORT}
+      CEPH_DEMO_UID: ${CEPH_DEMO_UID}
+      CEPH_DEMO_ACCESS_KEY: ${CEPH_ACCESS_KEY}
+      CEPH_DEMO_SECRET_KEY: ${CEPH_SECRET_KEY}
     ports:
-      - "${MINIO_API_PORT}:9000"
-      - "${MINIO_CONSOLE_PORT}:9001"
+      - "${CEPH_RGW_PORT}:${CEPH_RGW_PORT}"
     volumes:
-      - minio_data:/data
+      - ceph_data:/var/lib/ceph
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD-SHELL", "curl -s http://localhost:${CEPH_RGW_PORT}/ >/dev/null"]
       interval: 30s
       timeout: 20s
       retries: 5
@@ -259,6 +292,30 @@ services:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  openldap:
+    image: osixia/openldap:1.5.0
+    profiles:
+      - core
+      - security
+    env_file:
+      - .env
+    environment:
+      LDAP_DOMAIN: ${LDAP_DOMAIN}
+      LDAP_ORGANISATION: ${LDAP_ORGANIZATION}
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      LDAP_CONFIG_PASSWORD: ${LDAP_CONFIG_PASSWORD}
+    volumes:
+      - openldap_data:/var/lib/ldap
+      - openldap_config:/etc/ldap/slapd.d
+      - ./platform/security/ldap/seed.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/seed.ldif:ro
+    ports:
+      - "389:389"
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost -b ${LDAP_BASE_DN} >/dev/null 2>&1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -426,13 +483,39 @@ services:
       INTERNAL_API_HOST: ${INTERNAL_API_HOST}
       INTERNAL_API_URL: ${INTERNAL_API_URL}
       WEBAPP_URL: ${WEBAPP_URL}
-    ports:
-      - "8000:80"
     depends_on:
       airbyte-server:
         condition: service_started
       airbyte-bootloader:
         condition: service_completed_successfully
+
+  airbyte-auth-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    profiles:
+      - ingestion
+    env_file:
+      - .env
+    command:
+      - --provider=keycloak-oidc
+      - --redirect-url=http://localhost:8000/oauth2/callback
+      - --oidc-issuer-url=http://keycloak:${KEYCLOAK_HTTP_PORT}/realms/oner
+      - --client-id=${AIRBYTE_OIDC_CLIENT_ID}
+      - --client-secret=${AIRBYTE_OIDC_CLIENT_SECRET}
+      - --cookie-secret=${AIRBYTE_OIDC_COOKIE_SECRET}
+      - --email-domain=*
+      - --upstream=http://airbyte-webapp:80
+      - --http-address=0.0.0.0:8000
+      - --cookie-secure=false
+      - --pass-authorization-header=true
+      - --set-authorization-header=true
+      - --set-xauthrequest=true
+    ports:
+      - "8000:8000"
+    depends_on:
+      airbyte-webapp:
+        condition: service_started
+      keycloak:
+        condition: service_started
 
   spark-master:
     image: apache/spark:3.5.1
@@ -545,15 +628,15 @@ services:
     environment:
       QUARKUS_HTTP_PORT: 8181
       CATALOG__NAME: default
-      CATALOG__WAREHOUSE: s3://${MINIO_BUCKET_ICEBERG}/warehouse
+      CATALOG__WAREHOUSE: s3://${CEPH_BUCKET_ICEBERG}/warehouse
       CATALOG__IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
-      CATALOG__AWS__ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-      CATALOG__AWS__SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
-      CATALOG__AWS__REGION: us-east-1
-      CATALOG__S3__ENDPOINT: http://minio:9000
+      CATALOG__AWS__ACCESS_KEY_ID: ${CEPH_ACCESS_KEY}
+      CATALOG__AWS__SECRET_ACCESS_KEY: ${CEPH_SECRET_KEY}
+      CATALOG__AWS__REGION: ${CEPH_REGION}
+      CATALOG__S3__ENDPOINT: ${CEPH_RGW_ENDPOINT}
       CATALOG__S3__PATH_STYLE_ACCESS: "true"
     depends_on:
-      minio:
+      ceph:
         condition: service_healthy
     ports:
       - "${ICEBERG_REST_PORT}:8181"
@@ -565,7 +648,10 @@ services:
     env_file:
       - .env
     environment:
-      MINIO_BUCKET_ICEBERG: ${MINIO_BUCKET_ICEBERG}
+      CEPH_BUCKET_ICEBERG: ${CEPH_BUCKET_ICEBERG}
+      CEPH_ACCESS_KEY: ${CEPH_ACCESS_KEY}
+      CEPH_SECRET_KEY: ${CEPH_SECRET_KEY}
+      CEPH_RGW_ENDPOINT: ${CEPH_RGW_ENDPOINT}
     volumes:
       - ./platform/analytics/trino/etc:/etc/trino
       - trino_data:/data/trino
@@ -574,7 +660,7 @@ services:
     depends_on:
       iceberg-rest:
         condition: service_started
-      minio:
+      ceph:
         condition: service_healthy
       postgres:
         condition: service_healthy
@@ -599,6 +685,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 10
+    depends_on:
+      openldap:
+        condition: service_healthy
 
   openmetadata-postgres:
     image: postgres:15
@@ -735,20 +824,18 @@ services:
       - .env
     environment:
       MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${CEPH_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${CEPH_SECRET_KEY}
     command: >
       mlflow server
         --backend-store-uri postgresql://${MLFLOW_DB_USER}:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/${MLFLOW_BACKEND_DB}
         --default-artifact-root ${MLFLOW_ARTIFACT_ROOT}
         --host 0.0.0.0
         --port 5000
-    ports:
-      - "5000:5000"
     depends_on:
       mlflow-db:
         condition: service_healthy
-      minio:
+      ceph:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000')\""]
@@ -757,27 +844,32 @@ services:
       retries: 12
       start_period: 20s
 
-  bentoml:
-    build:
-      context: platform/ml/bento_service
-      dockerfile: Dockerfile
+  mlflow-auth-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
     profiles:
       - ml
     env_file:
       - .env
-    environment:
-      BENTOML_HOME: /home/bento/bentoml
-      MLFLOW_TRACKING_URI: ${MLFLOW_INTERNAL_TRACKING_URI}
-      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
-      MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME}
-    volumes:
-      - bentoml_store:/home/bento/bentoml
+    command:
+      - --provider=keycloak-oidc
+      - --redirect-url=http://localhost:5000/oauth2/callback
+      - --oidc-issuer-url=http://keycloak:${KEYCLOAK_HTTP_PORT}/realms/oner
+      - --client-id=${MLFLOW_OIDC_CLIENT_ID}
+      - --client-secret=${MLFLOW_OIDC_CLIENT_SECRET}
+      - --cookie-secret=${MLFLOW_OIDC_COOKIE_SECRET}
+      - --email-domain=*
+      - --upstream=http://mlflow:5000
+      - --http-address=0.0.0.0:5000
+      - --cookie-secure=false
+      - --pass-authorization-header=true
+      - --set-authorization-header=true
+      - --set-xauthrequest=true
     ports:
-      - "${BENTOML_PORT}:3001"
+      - "5000:5000"
     depends_on:
       mlflow:
+        condition: service_started
+      keycloak:
         condition: service_started
 
   streamlit:
@@ -789,13 +881,18 @@ services:
     env_file:
       - .env
     environment:
-      BENTO_ENDPOINT: http://bentoml:3001/predict
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}
+      AWS_ACCESS_KEY_ID: ${CEPH_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${CEPH_SECRET_KEY}
+      MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME}
+      MLFLOW_MODEL_STAGE: Staging
     volumes:
       - ./platform/apps/streamlit_app:/app
     ports:
       - "${STREAMLIT_PORT}:8501"
     depends_on:
-      bentoml:
+      mlflow:
         condition: service_started
 
   metabase:
@@ -847,7 +944,7 @@ volumes:
   postgres_data:
   redis_data:
   clickhouse_data:
-  minio_data:
+  ceph_data:
   airbyte_db:
   airbyte_workspace:
   airbyte_data:
@@ -856,8 +953,9 @@ volumes:
   grafana_data:
   infisical_pg:
   infisical_redis:
+  openldap_data:
+  openldap_config:
   mlflow_db:
-  bentoml_store:
   metabase_data:
   pulsar_data:
   jenkins_home:

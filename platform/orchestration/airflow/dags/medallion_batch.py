@@ -58,14 +58,14 @@ def _airbyte_connection_id() -> str:
 
 
 def _boto_client() -> boto3.client:
-    conn = BaseHook.get_connection("minio_default")
+    conn = BaseHook.get_connection("object_store_default")
     extra = conn.extra_dejson or {}
     return boto3.client(
         "s3",
-        endpoint_url=extra.get("endpoint_url", os.getenv("MINIO_ENDPOINT", "http://minio:9000")),
+        endpoint_url=extra.get("endpoint_url", os.getenv("CEPH_RGW_ENDPOINT", "http://ceph:9000")),
         aws_access_key_id=conn.login,
         aws_secret_access_key=conn.password,
-        region_name=extra.get("region_name", "us-east-1"),
+        region_name=extra.get("region_name", os.getenv("CEPH_REGION", "us-east-1")),
     )
 
 
@@ -182,7 +182,7 @@ def medallion_batch_demo() -> None:
 
     @task()
     def pull_bronze_objects(_: Dict[str, Any]) -> List[Dict[str, Any]]:
-        bucket = os.getenv("MINIO_BUCKET_BRONZE", "bronze")
+        bucket = os.getenv("CEPH_BUCKET_BRONZE", "bronze")
         prefix = os.getenv("AIRBYTE_BRONZE_PREFIX", "airbyte")
         client = _boto_client()
         paginator = client.get_paginator("list_objects_v2")

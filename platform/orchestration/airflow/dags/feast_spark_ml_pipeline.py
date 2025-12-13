@@ -64,22 +64,6 @@ def train_spark_model(**context):
     context["ti"].xcom_push(key="best_run_id", value=run_id)
 
 
-def build_bento(**context):
-    model_name = context["ti"].xcom_pull(task_ids="spark_train_model", key="model_name")
-    service_dir = "/opt/airflow/platform/ml/bento_service"
-    env = os.environ.copy()
-    env.setdefault("BENTO_MODEL_NAME", model_name or env.get("MLFLOW_MODEL_NAME", "oner_churn_model"))
-    subprocess.run(["bentoml", "build"], cwd=service_dir, env=env, check=True)
-
-
-def refresh_bento_server(**_):
-    # trigger reload by touching a file Bento watches
-    signal_file = "/home/airflow/bentoml/refresh.signal"
-    os.makedirs(os.path.dirname(signal_file), exist_ok=True)
-    with open(signal_file, "w", encoding="utf-8") as fp:
-        fp.write(datetime.utcnow().isoformat())
-
-
 def create_dag() -> DAG:
     default_args = {
         "owner": "ml-platform",
@@ -93,7 +77,7 @@ def create_dag() -> DAG:
     with DAG(
         dag_id="feast_spark_ml_pipeline",
         default_args=default_args,
-        description="Feature engineering with Feast, Spark ML training with MLflow, and Bento packaging",
+        description="Feature engineering with Feast and Spark ML training with MLflow",
         start_date=datetime(2024, 1, 1),
         schedule=None,
         catchup=False,
@@ -102,10 +86,8 @@ def create_dag() -> DAG:
         materialize = PythonOperator(task_id="feast_materialize", python_callable=feast_materialize)
         export_dataset = PythonOperator(task_id="generate_training_dataset", python_callable=generate_training_dataset)
         train = PythonOperator(task_id="spark_train_model", python_callable=train_spark_model)
-        build = PythonOperator(task_id="build_bento_bundle", python_callable=build_bento)
-        notify = PythonOperator(task_id="refresh_bento", python_callable=refresh_bento_server)
 
-        apply >> materialize >> export_dataset >> train >> build >> notify
+        apply >> materialize >> export_dataset >> train
 
     return dag
 

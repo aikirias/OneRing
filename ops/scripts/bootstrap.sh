@@ -130,10 +130,10 @@ if [ "$SKIP_PULL" = false ]; then
 fi
 
 declare -A PROFILE_BASE_SERVICES=(
-  [core]="postgres redis clickhouse minio infisical-db infisical-redis infisical"
-  [ingestion]="minio airbyte-db"
+  [core]="postgres redis clickhouse ceph infisical-db infisical-redis infisical"
+  [ingestion]="ceph airbyte-db"
   [catalog]="openmetadata-postgres openmetadata-elasticsearch"
-  [ml]="minio mlflow-db"
+  [ml]="ceph mlflow-db"
   [analytics]="clickhouse"
   [streaming]="pulsar"
   [cicd]="jenkins"
@@ -175,22 +175,22 @@ if profile_selected core; then
   fi
 fi
 
-if [[ -n "${BASE_SEEN[minio]:-}" ]]; then
-  echo "Waiting for MinIO to become healthy..."
-  wait_for_service_health minio 240 5 || echo "MinIO health check timed out; continuing."
-  echo "Creating MinIO buckets..."
-  for bucket in "$MINIO_BUCKET_BRONZE" "$MINIO_BUCKET_SILVER" "$MINIO_BUCKET_GOLD" "$MINIO_BUCKET_MLFLOW" "$MINIO_BUCKET_STAGE" "$MINIO_BUCKET_ICEBERG"; do
+if [[ -n "${BASE_SEEN[ceph]:-}" ]]; then
+  echo "Waiting for Ceph RGW to become healthy..."
+  wait_for_service_health ceph 240 5 || echo "Ceph health check timed out; continuing."
+  echo "Creating Ceph buckets..."
+  for bucket in "$CEPH_BUCKET_BRONZE" "$CEPH_BUCKET_SILVER" "$CEPH_BUCKET_GOLD" "$CEPH_BUCKET_MLFLOW" "$CEPH_BUCKET_STAGE" "$CEPH_BUCKET_ICEBERG" "$CEPH_BUCKET_FEATURESTORE"; do
     [ -z "$bucket" ] && continue
     docker run --rm --network "${PROJECT_NETWORK}" \
-      -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
+      -e MC_HOST_local="http://$CEPH_ACCESS_KEY:$CEPH_SECRET_KEY@ceph:${CEPH_RGW_PORT}" \
       minio/mc:latest mb -p "local/$bucket" >/dev/null || true
     docker run --rm --network "${PROJECT_NETWORK}" \
-      -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
+      -e MC_HOST_local="http://$CEPH_ACCESS_KEY:$CEPH_SECRET_KEY@ceph:${CEPH_RGW_PORT}" \
       minio/mc:latest anonymous set none "local/$bucket" >/dev/null || true
   done
-  if [ -n "${MINIO_STAGE_USER:-}" ] && [ -n "${MINIO_STAGE_PASSWORD:-}" ] && [ -n "${MINIO_BUCKET_STAGE:-}" ]; then
-    echo "Configuring MinIO staging policy..."
-    STAGE_POLICY_NAME=${MINIO_STAGE_POLICY:-stage-policy}
+  if [ -n "${CEPH_STAGE_USER:-}" ] && [ -n "${CEPH_STAGE_PASSWORD:-}" ] && [ -n "${CEPH_BUCKET_STAGE:-}" ]; then
+    echo "Configuring Ceph staging policy..."
+    STAGE_POLICY_NAME=${CEPH_STAGE_POLICY:-stage-policy}
     tmp_policy="$(mktemp)"
     cat <<POLICY > "$tmp_policy"
 {
@@ -202,7 +202,7 @@ if [[ -n "${BASE_SEEN[minio]:-}" ]]; then
         "s3:ListBucket"
       ],
       "Resource": [
-        "arn:aws:s3:::${MINIO_BUCKET_STAGE}"
+        "arn:aws:s3:::${CEPH_BUCKET_STAGE}"
       ]
     },
     {
@@ -213,25 +213,25 @@ if [[ -n "${BASE_SEEN[minio]:-}" ]]; then
         "s3:DeleteObject"
       ],
       "Resource": [
-        "arn:aws:s3:::${MINIO_BUCKET_STAGE}/*"
+        "arn:aws:s3:::${CEPH_BUCKET_STAGE}/*"
       ]
     }
   ]
 }
 POLICY
     docker run --rm --network "${PROJECT_NETWORK}" \
-      -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
+      -e MC_HOST_local="http://$CEPH_ACCESS_KEY:$CEPH_SECRET_KEY@ceph:${CEPH_RGW_PORT}" \
       -v "$tmp_policy:/stage-policy.json" \
       minio/mc:latest admin policy create local "$STAGE_POLICY_NAME" /stage-policy.json >/dev/null 2>&1 || true
     docker run --rm --network "${PROJECT_NETWORK}" \
-      -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
-      minio/mc:latest admin user info local "$MINIO_STAGE_USER" >/dev/null 2>&1 || \
+      -e MC_HOST_local="http://$CEPH_ACCESS_KEY:$CEPH_SECRET_KEY@ceph:${CEPH_RGW_PORT}" \
+      minio/mc:latest admin user info local "$CEPH_STAGE_USER" >/dev/null 2>&1 || \
       docker run --rm --network "${PROJECT_NETWORK}" \
-        -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
-        minio/mc:latest admin user add local "$MINIO_STAGE_USER" "$MINIO_STAGE_PASSWORD" >/dev/null 2>&1
+        -e MC_HOST_local="http://$CEPH_ACCESS_KEY:$CEPH_SECRET_KEY@ceph:${CEPH_RGW_PORT}" \
+        minio/mc:latest admin user add local "$CEPH_STAGE_USER" "$CEPH_STAGE_PASSWORD" >/dev/null 2>&1
     docker run --rm --network "${PROJECT_NETWORK}" \
-      -e MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@minio:9000" \
-      minio/mc:latest admin policy attach local "$STAGE_POLICY_NAME" --user "$MINIO_STAGE_USER" >/dev/null || true
+      -e MC_HOST_local="http://$CEPH_ACCESS_KEY:$CEPH_SECRET_KEY@ceph:${CEPH_RGW_PORT}" \
+      minio/mc:latest admin policy attach local "$STAGE_POLICY_NAME" --user "$CEPH_STAGE_USER" >/dev/null || true
     rm -f "$tmp_policy"
   fi
 fi

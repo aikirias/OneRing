@@ -1,0 +1,45 @@
+dn: dc=oner,dc=local
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: OneRing Platform
+dc: oner
+
+dn: ou=people,dc=oner,dc=local
+objectClass: top
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=service,dc=oner,dc=local
+objectClass: top
+objectClass: organizationalUnit
+ou: service
+
+dn: uid=platform-admin,ou=people,dc=oner,dc=local
+objectClass: inetOrgPerson
+cn: Platform Admin
+sn: Admin
+uid: platform-admin
+mail: admin@oner.local
+userPassword: admin
+
+dn: uid=data-analyst,ou=people,dc=oner,dc=local
+objectClass: inetOrgPerson
+cn: Data Analyst
+sn: Analyst
+uid: data-analyst
+mail: analyst@oner.local
+userPassword: analyst
+
+dn: uid=data-engineer,ou=people,dc=oner,dc=local
+objectClass: inetOrgPerson
+cn: Data Engineer
+sn: Engineer
+uid: data-engineer
+mail: engineer@oner.local
+userPassword: engineer
+
+dn: cn=clickhouse-reader,ou=service,dc=oner,dc=local
+objectClass: organizationalRole
+cn: clickhouse-reader
+userPassword: clickhousebind
